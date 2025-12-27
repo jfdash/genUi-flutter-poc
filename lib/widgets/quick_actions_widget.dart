@@ -1,43 +1,93 @@
 import 'package:flutter/material.dart';
-import 'package:gen_ui_poc/service/ai_service.dart';
-import 'package:provider/provider.dart';
+import '../theme/app_theme.dart';
 
-class QuickActionsWidget extends StatelessWidget {
-  const QuickActionsWidget({super.key});
+class QuickActionCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Gradient gradient;
+  final VoidCallback? onTap;
+
+  const QuickActionCard({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.gradient,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final quickActions = [
-      {
-        'title': '🚗 Assicurazione Auto',
-        'message': 'Vorrei un preventivo per assicurare la mia auto',
-      },
-      {'title': '🏠 Assicurazione Casa', 'message': 'Sono interessato ad assicurare la mia casa'},
-      {
-        'title': '🏥 Assicurazione Salute',
-        'message': 'Vorrei informazioni sull\'assicurazione sanitaria',
-      },
-      {'title': '🛵 Assicurazione Moto', 'message': 'Devo assicurare la mia moto'},
-    ];
-
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      alignment: WrapAlignment.center,
-      children: quickActions.map((action) {
-        return ActionChip(
-          avatar: Text(action['title']!.split(' ')[0], style: const TextStyle(fontSize: 20)),
-          label: Text(
-            action['title']!.substring(action['title']!.indexOf(' ') + 1),
-            style: const TextStyle(fontSize: 13),
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              gradient: gradient,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: gradient.colors.first.withOpacity(0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 32),
           ),
-          onPressed: () {
-            context.read<AIService>().sendMessage(action['message']!);
-          },
-          backgroundColor: Colors.blue.shade50,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        );
-      }).toList(),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class QuickActionsRow extends StatelessWidget {
+  const QuickActionsRow({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        color: AppColors.mintBackground,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          QuickActionCard(
+            title: 'Stato Salute',
+            icon: Icons.favorite_rounded,
+            gradient: AppGradients.health,
+            onTap: () {},
+          ),
+          QuickActionCard(
+            title: 'Le Mie\nPolizze',
+            icon: Icons.description_rounded,
+            gradient: AppGradients.policy,
+            onTap: () {},
+          ),
+          QuickActionCard(
+            title: 'Info\nPolizza',
+            icon: Icons.info_rounded,
+            gradient: AppGradients.info,
+            onTap: () {},
+          ),
+        ],
+      ),
     );
   }
 }
