@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "876051387322",
+    "project_id": "genuipoc",
+    "storage_bucket": "genuipoc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:876051387322:android:9fed49705c29dcc65b8383",
+        "android_client_info": {
+          "package_name": "com.example.gen_ui_poc"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDApWylW2DxZMthk4unsX8NOk3TngfMdr0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
