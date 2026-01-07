@@ -5,9 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "gen_ui_poc",
+            "name": "Run dev",
             "request": "launch",
-            "type": "dart"
+            "type": "dart",
+            "flutterMode": "debug",
+            "program": "lib/main.dart",
         },
         {
             "name": "gen_ui_poc (profile mode)",
