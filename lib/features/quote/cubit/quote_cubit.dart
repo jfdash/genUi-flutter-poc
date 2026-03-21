@@ -7,15 +7,10 @@ import 'package:gen_ui_poc/features/quote/cubit/quote_state.dart';
 import 'package:gen_ui_poc/features/quote/services/coverage_calculator.dart';
 
 class QuoteCubit extends Cubit<QuoteState> {
-  final CoverageCalculator _calculator;
-  final AIService _aiService;
+  QuoteCubit({required CoverageCalculator calculator, required AIServiceEventDriven aiService})
+    : super(QuoteState.initial());
 
-  QuoteCubit({required CoverageCalculator calculator, required AIService aiService})
-    : _calculator = calculator,
-      _aiService = aiService,
-      super(QuoteState.initial());
-
-  /// ✅ Aggiorna campo generico da widget GenUI
+  ///  Aggiorna campo generico da widget GenUI
   void updateField(String fieldId, dynamic value) {
     // Salva in rawFields
     final updatedRaw = Map<String, dynamic>.from(state.rawFields);
@@ -27,7 +22,7 @@ class QuoteCubit extends Cubit<QuoteState> {
     emit(updatedState.copyWith(rawFields: updatedRaw));
   }
 
-  /// ✅ Mappa rawFields a VehicleData e DriverData
+  ///  Mappa rawFields a VehicleData e DriverData
   QuoteState _mapFieldsToModels(Map<String, dynamic> fields) {
     VehicleDataModel vehicle = state.vehicleData;
     DriverDataModel driver = state.driverData;
@@ -132,67 +127,14 @@ class QuoteCubit extends Cubit<QuoteState> {
     return null;
   }
 
-  /// ✅ Aggiorna direttamente VehicleData (per estrazione AI)
+  /// Aggiorna direttamente VehicleData (per estrazione AI)
   void updateVehicleData(VehicleDataModel vehicle) {
     emit(state.copyWith(vehicleData: vehicle));
   }
 
-  /// ✅ Aggiorna direttamente DriverData (per estrazione AI)
+  ///  Aggiorna direttamente DriverData (per estrazione AI)
   void updateDriverData(DriverDataModel driver) {
     emit(state.copyWith(driverData: driver));
-  }
-
-  /// ✅ HYBRID: Calcola suggerimenti + Arricchisci con AI
-  Future<void> generateCoverageSuggestions({bool useAI = true}) async {
-    // 1. Check di sicurezza: se stiamo già caricando, ignoriamo la chiamata
-    if (state.isLoading || state.isLoadingExplanations) return;
-
-    if (!state.isReadyForQuote) {
-      emit(state.copyWith(error: 'Dati incompleti per generare preventivo'));
-      return;
-    }
-
-    emit(state.copyWith(isLoading: true, error: null));
-
-    try {
-      // ✅ STEP 1: Calcolo deterministico locale (veloce)
-      final suggestions = _calculator.calculateSuggestions(
-        vehicle: state.vehicleData,
-        driver: state.driverData,
-      );
-
-      // Emettiamo subito i risultati base per rendere l'app reattiva
-      emit(
-        state.copyWith(
-          coverageSuggestions: suggestions,
-          isLoading: false,
-          suggestionsCalculated: true,
-        ),
-      );
-
-      // ✅ STEP 2: Arricchimento AI Batch
-      if (useAI && _aiService.isInitialized) {
-        emit(state.copyWith(isLoadingExplanations: true));
-
-        // CHIAMATA BATCH: Passiamo tutta la lista.
-        // L'AIService che abbiamo riscritto farà UNA SOLA chiamata API.
-        final enriched = await _aiService.enrichSuggestionsWithExplanations(
-          suggestions: suggestions,
-          vehicle: state.vehicleData,
-          driver: state.driverData,
-        );
-
-        emit(state.copyWith(coverageSuggestions: enriched, isLoadingExplanations: false));
-      }
-    } catch (e) {
-      emit(
-        state.copyWith(
-          error: 'Errore generazione preventivo: $e',
-          isLoading: false,
-          isLoadingExplanations: false,
-        ),
-      );
-    }
   }
 
   /// Reset per nuova sessione

@@ -5,6 +5,7 @@ class ChoiceChipsWidget extends StatefulWidget {
   final String label;
   final List<String> options;
   final String? value;
+  final bool enabled;
   final Function(String) onChanged;
 
   const ChoiceChipsWidget({
@@ -13,6 +14,7 @@ class ChoiceChipsWidget extends StatefulWidget {
     required this.label,
     required this.options,
     this.value,
+    this.enabled = true,
     required this.onChanged,
   });
 
@@ -53,32 +55,40 @@ class _ChoiceChipsWidgetState extends State<ChoiceChipsWidget> {
               return ChoiceChip(
                 label: Text(option),
                 selected: isSelected,
-                onSelected: (selected) {
-                  if (selected) {
-                    setState(() => _selected = option);
-                    widget.onChanged(option);
-                    
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('$option selezionato ✓'),
-                        duration: const Duration(seconds: 1),
-                        behavior: SnackBarBehavior.floating,
-                        backgroundColor: const Color(0xFF059669),
-                      ),
-                    );
-                  }
-                },
-                selectedColor: const Color(0xFF4F46E5).withOpacity(0.2),
-                backgroundColor: const Color(0xFFF3F4F6),
+                onSelected: widget.enabled
+                    ? (selected) {
+                        if (selected) {
+                          setState(() => _selected = option);
+                          widget.onChanged(option);
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('$option selezionato ✓'),
+                              duration: const Duration(seconds: 1),
+                              behavior: SnackBarBehavior.floating,
+                              backgroundColor: const Color(0xFF059669),
+                            ),
+                          );
+                        }
+                      }
+                    : null,
+                selectedColor: widget.enabled
+                    ? const Color(0xFF4F46E5).withOpacity(0.2)
+                    : Colors.grey.shade200,
+                backgroundColor: widget.enabled ? const Color(0xFFF3F4F6) : Colors.grey.shade100,
                 labelStyle: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: isSelected ? const Color(0xFF4F46E5) : const Color(0xFF6B7280),
+                  color: widget.enabled
+                      ? (isSelected ? const Color(0xFF4F46E5) : const Color(0xFF6B7280))
+                      : Colors.grey.shade400,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                   side: BorderSide(
-                    color: isSelected ? const Color(0xFF4F46E5) : Colors.transparent,
+                    color: widget.enabled
+                        ? (isSelected ? const Color(0xFF4F46E5) : Colors.transparent)
+                        : Colors.grey.shade300,
                     width: 2,
                   ),
                 ),

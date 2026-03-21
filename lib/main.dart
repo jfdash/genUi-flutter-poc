@@ -4,13 +4,24 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
 import 'package:gen_ui_poc/core/router/app_router.dart';
+import 'package:gen_ui_poc/core/service/quote_storage_repository.dart';
 import 'package:provider/provider.dart';
 import 'package:gen_ui_poc/core/service/ai_service.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:gen_ui_poc/features/quote/services/coverage_calculator.dart';
+import 'package:logging/logging.dart';
+import 'package:genui/genui.dart';
+
+// Logger globale per genui - mostra TUTTI i messaggi AI
+final _genUiLogger = configureGenUiLogging(level: Level.ALL);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Configura il listener per i log di genui
+  _genUiLogger.onRecord.listen((record) {
+    debugPrint('🔍 [${record.loggerName}] ${record.message}');
+  });
 
   await registerDependencies();
 
@@ -21,6 +32,9 @@ Future<void> main() async {
   await Hive.initFlutter();
   await Hive.openBox('app_state');
   await Hive.openBox('conversation');
+
+  // Initialize QuoteStorageRepository
+  await injector<QuoteStorageRepository>().init();
 
   runApp(const InsuranceApp());
 }
@@ -33,12 +47,12 @@ class InsuranceApp extends StatefulWidget {
 }
 
 class _InsuranceAppState extends State<InsuranceApp> {
-  late final AIService _aiService;
+  late final AIServiceEventDriven _aiService;
 
   @override
   void initState() {
     super.initState();
-    _aiService = AIService();
+    _aiService = AIServiceEventDriven();
   }
 
   @override

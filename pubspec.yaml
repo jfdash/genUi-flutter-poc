@@ -48,6 +48,8 @@ dependencies:
   get_it: ^9.2.0
   supabase_flutter: ^2.12.0
   go_router: ^17.0.1
+  dartantic_ai: ^2.2.2
+  genui_dartantic: ^0.6.1
 
 dev_dependencies:
   flutter_test:

@@ -8,6 +8,7 @@ class TextInputWidget extends StatefulWidget {
   final String? icon;
   final bool required;
   final String? validationPattern;
+  final bool enabled;
   final Function(String) onChanged;
 
   const TextInputWidget({
@@ -19,6 +20,7 @@ class TextInputWidget extends StatefulWidget {
     this.icon,
     this.required = false,
     this.validationPattern,
+    this.enabled = true,
     required this.onChanged,
   });
 
@@ -92,58 +94,100 @@ class _TextInputWidgetState extends State<TextInputWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextFormField(
-              controller: _controller,
-              decoration: InputDecoration(
-                labelText: widget.label,
-                hintText: widget.hint,
-                errorText: _errorText,
-                prefixIcon: Icon(_getIcon(widget.icon), size: 20),
-                filled: true,
-                fillColor: const Color(0xFFF3F4F6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+    // Gestisci constraints unbounded da GenUI
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isUnbounded = !constraints.maxWidth.isFinite;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            mainAxisSize: isUnbounded ? MainAxisSize.min : MainAxisSize.max,
+            children: [
+              if (isUnbounded)
+                // Constraints unbounded: usa larghezza fissa
+                SizedBox(
+                  width: 300,
+                  child: TextFormField(
+                    controller: _controller,
+                    enabled: widget.enabled,
+                    decoration: InputDecoration(
+                      labelText: widget.label,
+                      hintText: widget.hint,
+                      errorText: _errorText,
+                      prefixIcon: Icon(_getIcon(widget.icon), size: 20),
+                      filled: true,
+                      fillColor: widget.enabled ? const Color(0xFFF3F4F6) : const Color(0xFFE5E7EB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFF4F46E5), width: 2),
+                      ),
+                      errorBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFDC2626), width: 2),
+                      ),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                    onFieldSubmitted: widget.enabled ? (_) => _confirm() : null,
+                  ),
+                )
+              else
+                // Constraints finite: usa Expanded
+                Expanded(
+                  child: TextFormField(
+                    controller: _controller,
+                    enabled: widget.enabled,
+                    decoration: InputDecoration(
+                      labelText: widget.label,
+                      hintText: widget.hint,
+                      errorText: _errorText,
+                      prefixIcon: Icon(_getIcon(widget.icon), size: 20),
+                      filled: true,
+                      fillColor: widget.enabled ? const Color(0xFFF3F4F6) : const Color(0xFFE5E7EB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFF4F46E5), width: 2),
+                      ),
+                      errorBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFDC2626), width: 2),
+                      ),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                    onFieldSubmitted: widget.enabled ? (_) => _confirm() : null,
+                  ),
                 ),
-                focusedBorder: OutlineInputBorder(
+              const SizedBox(width: 8),
+              Material(
+                color: widget.enabled ? const Color(0xFF4F46E5) : const Color(0xFF9CA3AF),
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: widget.enabled ? _confirm : null,
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFF4F46E5), width: 2),
-                ),
-                errorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFFDC2626), width: 2),
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.check_rounded,
+                      color: widget.enabled ? Colors.white : const Color(0xFFD1D5DB),
+                      size: 24,
+                    ),
+                  ),
                 ),
               ),
-              textCapitalization: TextCapitalization.words,
-              onFieldSubmitted: (_) => _confirm(),
-            ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Material(
-            color: const Color(0xFF4F46E5),
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              onTap: _confirm,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 48,
-                height: 48,
-                alignment: Alignment.center,
-                child: const Icon(
-                  Icons.check_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
