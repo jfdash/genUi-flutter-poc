@@ -5,15 +5,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
 import 'package:gen_ui_poc/core/router/app_router.dart';
 import 'package:gen_ui_poc/core/service/quote_storage_repository.dart';
+import 'package:gen_ui_poc/core/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'package:gen_ui_poc/core/service/ai_service.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:gen_ui_poc/features/quote/services/coverage_calculator.dart';
-import 'package:logging/logging.dart';
 import 'package:genui/genui.dart';
 
 // Logger globale per genui - mostra TUTTI i messaggi AI
-final _genUiLogger = configureGenUiLogging(level: Level.ALL);
+final _genUiLogger = configureGenUiLogging();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,15 +72,7 @@ class _InsuranceAppState extends State<InsuranceApp> {
         title: 'Insurance GenUI POC',
         debugShowCheckedModeBanner: false,
         routerConfig: appRouter,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF4F46E5),
-            brightness: Brightness.light,
-          ),
-          fontFamily: 'Inter',
-          scaffoldBackgroundColor: const Color(0xFFF9FAFB),
-        ),
+        theme: AppTheme.lightTheme,
       ),
     );
   }

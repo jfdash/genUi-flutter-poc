@@ -1,134 +1,83 @@
 import 'package:flutter/material.dart';
 import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
+import 'package:gen_ui_poc/core/theme/app_theme.dart';
 import 'package:go_router/go_router.dart';
 
 class QuoteConfirmationScreen extends StatelessWidget {
-  final CompletedQuote quote;
-
   const QuoteConfirmationScreen({super.key, required this.quote});
+
+  final CompletedQuote quote;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
+      backgroundColor: AppTheme.background,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 36),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 32),
-
-              // Success icon
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF10B981).withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
+              _Header(quote: quote),
+              const SizedBox(height: 28),
+              _MetaBlock(label: 'NUMERO POLIZZA', value: quote.id.substring(0, 8).toUpperCase()),
+              _MetaBlock(label: 'DATA RINNOVO', value: _formatDate(quote.createdAt)),
+              _MetaBlock(
+                label: 'PREMIO MENSILE',
+                value: '€${(quote.totalPrice / 12).toStringAsFixed(2)}',
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'LIMITI DI COPERTURA',
+                style: TextStyle(
+                  fontSize: 12,
+                  letterSpacing: 2,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...quote.coverages.take(3).map(
+                (coverage) => _CoverageLimitCard(
+                  title: coverage.title,
+                  description: coverage.description,
+                  price: coverage.annualPrice,
+                ),
+              ),
+              const SizedBox(height: 20),
+              _ClaimsCallout(
+                onTap: () => context.go('/home'),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'DOCUMENTI',
+                style: TextStyle(
+                  fontSize: 12,
+                  letterSpacing: 2,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const _DocumentsCard(),
+              const SizedBox(height: 28),
+              Center(
+                child: Column(
+                  children: [
+                    Text(
+                      'Hai domande sulla tua copertura?',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Contatta un consulente',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.underline,
+                      ),
                     ),
                   ],
                 ),
-                child: const Icon(Icons.check_rounded, color: Colors.white, size: 44),
               ),
-
-              const SizedBox(height: 24),
-
-              const Text(
-                'Preventivo Completato!',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF111827),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Il tuo preventivo è stato salvato con successo',
-                style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 32),
-
-              // Vehicle card
-              _buildSectionCard(
-                icon: Icons.directions_car_rounded,
-                title: 'Veicolo',
-                gradient: const LinearGradient(colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)]),
-                children: [
-                  _buildInfoRow('Veicolo', quote.vehicleLabel),
-                  if (quote.vehicle.fuelType != null)
-                    _buildInfoRow('Carburante', quote.vehicle.fuelType!.displayName),
-                  if (quote.vehicle.annualKm != null)
-                    _buildInfoRow('Km annui', '${quote.vehicle.annualKm} km'),
-                  if (quote.vehicle.usage != null)
-                    _buildInfoRow('Utilizzo', quote.vehicle.usage!.displayName),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Driver card
-              _buildSectionCard(
-                icon: Icons.person_rounded,
-                title: 'Conducente',
-                gradient: const LinearGradient(colors: [Color(0xFF0EA5E9), Color(0xFF3B82F6)]),
-                children: [
-                  if (quote.driverLabel.isNotEmpty) _buildInfoRow('Nome', quote.driverLabel),
-                  if (quote.driver.city != null) _buildInfoRow('Città', quote.driver.city!),
-                  if (quote.driver.age != null) _buildInfoRow('Età', '${quote.driver.age} anni'),
-                  if (quote.driver.yearsOfExperience != null)
-                    _buildInfoRow('Esperienza', '${quote.driver.yearsOfExperience} anni'),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Price card
-              _buildPriceCard(),
-
-              const SizedBox(height: 16),
-
-              // Coverages
-              if (quote.coverages.isNotEmpty) ...[
-                _buildCoveragesCard(),
-                const SizedBox(height: 16),
-              ],
-
-              const SizedBox(height: 16),
-
-              // Action buttons
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    context.go('/home');
-                  },
-                  icon: const Icon(Icons.home_rounded, color: Colors.white),
-                  label: const Text(
-                    'Torna alla Home',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4F46E5),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 4,
-                    shadowColor: const Color(0xFF4F46E5).withOpacity(0.3),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -136,203 +85,278 @@ class QuoteConfirmationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSectionCard({
-    required IconData icon,
-    required String title,
-    required Gradient gradient,
-    required List<Widget> children,
-  }) {
+  String _formatDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+}
+
+class _Header extends StatelessWidget {
+  const _Header({required this.quote});
+
+  final CompletedQuote quote;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(Icons.directions_car_rounded),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            quote.vehicleLabel,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceMuted,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Text(
+            'ATTIVA',
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(width: 12),
+        const Icon(Icons.notifications, size: 18),
+        const SizedBox(width: 12),
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppTheme.accentSoft,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.person, size: 16),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetaBlock extends StatelessWidget {
+  const _MetaBlock({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              letterSpacing: 1.5,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CoverageLimitCard extends StatelessWidget {
+  const _CoverageLimitCard({
+    required this.title,
+    required this.description,
+    required this.price,
+  });
+
+  final String title;
+  final String description;
+  final double price;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: AppTheme.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: gradient,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(icon, color: Colors.white, size: 24),
-                const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
+          Row(
+            children: [
+              const Icon(Icons.shield_rounded, size: 22),
+              const Spacer(),
+              Text(
+                '€${price.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          // Content
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: children),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280))),
+          const SizedBox(height: 24),
           Text(
-            value,
+            title,
             style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF111827),
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPriceCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF10B981), Color(0xFF059669)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF10B981).withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          const Text(
-            'Prezzo Totale Annuo',
-            style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
           Text(
-            '€ ${quote.totalPrice.toStringAsFixed(2)}',
-            style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w800),
-          ),
-          if (quote.essentialPrice != quote.totalPrice) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Solo essenziali: € ${quote.essentialPrice.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+            description,
+            style: const TextStyle(
+              fontSize: 15,
+              height: 1.45,
+              color: AppTheme.textSecondary,
             ),
-          ],
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildCoveragesCard() {
+class _ClaimsCallout extends StatelessWidget {
+  const _ClaimsCallout({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: AppTheme.action,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Devi segnalare un sinistro?',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Il nostro assistente sinistri AI è disponibile 24/7 per aiutarti ad aprire subito la pratica.',
+            style: TextStyle(
+              color: Color(0xFFD6D2CA),
+              fontSize: 15,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: onTap,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: AppTheme.textPrimary,
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Apri sinistro'),
+                SizedBox(width: 8),
+                Icon(Icons.arrow_forward_rounded, size: 18),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DocumentsCard extends StatelessWidget {
+  const _DocumentsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    const docs = [
+      'Policy_Agreement_2024.pdf',
+      'Proof_of_Insurance_ID.pdf',
+      'Terms_and_Conditions.pdf',
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: AppTheme.border),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
+      child: Column(
+        children: List.generate(docs.length, (index) {
+          final doc = docs[index];
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              border: index == docs.length - 1
+                  ? null
+                  : const Border(
+                      bottom: BorderSide(color: AppTheme.border),
+                    ),
+            ),
+            child: Row(
               children: [
-                Icon(Icons.shield_rounded, color: Color(0xFF4F46E5), size: 24),
-                SizedBox(width: 12),
-                Text(
-                  'Coperture Incluse',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF111827),
+                const Icon(Icons.description_outlined, size: 20, color: AppTheme.textSecondary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    doc,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: AppTheme.textPrimary,
+                    ),
                   ),
                 ),
+                const Icon(Icons.download_rounded, size: 18),
               ],
             ),
-            const SizedBox(height: 16),
-            ...quote.coverages.map((c) => _buildCoverageRow(c.title, c.annualPrice, c.levelEmoji)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCoverageRow(String name, double price, String emoji) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Text(emoji, style: const TextStyle(fontSize: 18)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              name,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF374151),
-              ),
-            ),
-          ),
-          Text(
-            '€ ${price.toStringAsFixed(2)}/anno',
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF111827),
-            ),
-          ),
-        ],
+          );
+        }),
       ),
     );
   }

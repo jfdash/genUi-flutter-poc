@@ -45,6 +45,20 @@ class QuoteStorageRepository {
     return quotes;
   }
 
+  /// Restituisce un preventivo per id, se presente
+  CompletedQuote? getQuoteById(String id) {
+    final jsonString = _safeBox.get(id);
+    if (jsonString is! String) {
+      return null;
+    }
+
+    try {
+      return CompletedQuote.fromJsonString(jsonString);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Elimina un preventivo
   Future<void> deleteQuote(String id) async {
     await _safeBox.delete(id);

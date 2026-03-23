@@ -1,7 +1,7 @@
-// lib/features/home/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
+import 'package:gen_ui_poc/core/theme/app_theme.dart';
 import 'package:gen_ui_poc/features/home/cubit/home_cubit.dart';
 import 'package:gen_ui_poc/features/home/cubit/home_state.dart';
 
@@ -11,50 +11,39 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
+      backgroundColor: AppTheme.background,
       body: SafeArea(
         child: BlocBuilder<HomeCubit, HomeState>(
           builder: (context, state) {
+            final quotes = state.completedQuotes;
             return RefreshIndicator(
-              onRefresh: () async {
-                context.read<HomeCubit>().loadQuotes();
-              },
+              color: AppTheme.textPrimary,
+              onRefresh: () async => context.read<HomeCubit>().loadQuotes(),
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 124),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 16),
-
-                    // Header utente
-                    _buildUserHeader(),
-
-                    const SizedBox(height: 32),
-
-                    // Info cards hardcoded
-                    _buildInfoBanner(),
-
+                    _WorkspaceHeader(quotesCount: quotes.length),
                     const SizedBox(height: 28),
-
-                    // Servizi
-                    const Text(
-                      'I Nostri Servizi',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
-                      ),
+                    _HeroIntro(quotesCount: quotes.length),
+                    const SizedBox(height: 34),
+                    _SectionHeader(
+                      title: 'Polizze attive',
+                      trailing: quotes.isEmpty ? 'PRONTO' : 'AGGIORNATO OGGI',
                     ),
-                    const SizedBox(height: 16),
-                    _buildServicesRow(),
-
-                    const SizedBox(height: 32),
-
-                    // Carousel preventivi
-                    _buildQuotesSection(state.completedQuotes),
-
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 14),
+                    ..._buildPolicyCards(quotes),
+                    const SizedBox(height: 34),
+                    const _SectionHeader(
+                      title: 'Raccomandazioni',
+                      trailing: 'PRIORITÀ',
+                    ),
+                    const SizedBox(height: 14),
+                    ..._buildRecommendationCards(quotes),
+                    const SizedBox(height: 34),
+                    const _SupportCallout(),
                   ],
                 ),
               ),
@@ -65,415 +54,322 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildUserHeader() {
+  List<Widget> _buildPolicyCards(List<CompletedQuote> quotes) {
+    final visibleQuotes = quotes.take(4).toList();
+    if (visibleQuotes.isEmpty) {
+      const placeholders = [
+        (Icons.directions_car_rounded, 'Auto', 'POLIZZA #AU-9021'),
+        (Icons.home_rounded, 'Casa', 'POLIZZA #HM-4420'),
+        (Icons.favorite_rounded, 'Vita', 'POLIZZA #LF-7811'),
+        (Icons.flight_rounded, 'Viaggio', 'POLIZZA #TR-1005'),
+      ];
+      return placeholders
+          .map(
+            (entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _PolicyCard(
+                icon: entry.$1,
+                title: entry.$2,
+                subtitle: entry.$3,
+              ),
+            ),
+          )
+          .toList();
+    }
+
+    return visibleQuotes
+        .map(
+          (quote) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _PolicyCard(
+              icon: _policyIconForQuote(quote),
+              title: quote.vehicleLabel,
+              subtitle: 'POLIZZA #${quote.id.substring(0, 8).toUpperCase()}',
+              caption: '€ ${quote.totalPrice.toStringAsFixed(0)}/anno',
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  List<Widget> _buildRecommendationCards(List<CompletedQuote> quotes) {
+    final recommendations = <({IconData icon, String body, String cta})>[
+      (
+        icon: Icons.info,
+        body: quotes.isNotEmpty
+            ? 'La tua polizza più recente è disponibile per la revisione. Controlla il premio e conferma le protezioni che vuoi mantenere attive.'
+            : 'Il tuo archivio assicurativo è ancora vuoto. Inizia con un preventivo auto o viaggio per creare il tuo primo workspace attivo.',
+        cta: quotes.isNotEmpty ? 'Rivedi polizza' : 'Crea il primo preventivo',
+      ),
+      (
+        icon: Icons.tips_and_updates_rounded,
+        body:
+            'In base alla tua attività potresti beneficiare di una strategia bundle che tiene la gestione delle coperture in un unico posto.',
+        cta: 'Vedi dettagli bundle',
+      ),
+    ];
+
+    return recommendations
+        .map(
+          (item) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _RecommendationCard(
+              icon: item.icon,
+              body: item.body,
+              cta: item.cta,
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  IconData _policyIconForQuote(CompletedQuote quote) {
+    final lower = quote.vehicleLabel.toLowerCase();
+    if (lower.contains('viaggio')) {
+      return Icons.flight_rounded;
+    }
+    if (lower.contains('vita')) {
+      return Icons.favorite_rounded;
+    }
+    if (lower.contains('home') || lower.contains('casa')) {
+      return Icons.home_rounded;
+    }
+    return Icons.directions_car_rounded;
+  }
+}
+
+class _WorkspaceHeader extends StatelessWidget {
+  const _WorkspaceHeader({required this.quotesCount});
+
+  final int quotesCount;
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
         Container(
-          width: 52,
-          height: 52,
+          width: 32,
+          height: 32,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)]),
+            color: AppTheme.accentSoft,
             borderRadius: BorderRadius.circular(16),
           ),
-          child: const Center(
-            child: Text(
-              'JF',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
-            ),
-          ),
+          child: const Icon(Icons.person_rounded, size: 16),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 10),
         const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Benvenuto,', style: TextStyle(fontSize: 14, color: Color(0xFF6B7280))),
-              Text(
-                'Juri Fenzi',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ],
+          child: Text(
+            'Workspace Assistente',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
           ),
         ),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.notifications_outlined, color: Color(0xFF4F46E5), size: 24),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildInfoBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF4F46E5).withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.shield_rounded, color: Colors.white, size: 28),
-              ),
-              const SizedBox(width: 16),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Insurance GenUI',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Preventivi AI personalizzati',
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+        if (quotesCount > 0)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
+              color: AppTheme.surfaceMuted,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.auto_awesome, color: Colors.amber, size: 16),
-                SizedBox(width: 8),
-                Text(
-                  'Powered by Gemini AI',
-                  style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
-                ),
-              ],
+            child: Text(
+              '$quotesCount ATTIVE',
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildServicesRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildServiceCard(
-            icon: Icons.directions_car_rounded,
-            label: 'Auto',
-            color: const Color(0xFF4F46E5),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildServiceCard(
-            icon: Icons.home_rounded,
-            label: 'Casa',
-            color: const Color(0xFF0EA5E9),
-            enabled: false,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildServiceCard(
-            icon: Icons.favorite_rounded,
-            label: 'Vita',
-            color: const Color(0xFF10B981),
-            enabled: false,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildServiceCard(
-            icon: Icons.travel_explore_rounded,
-            label: 'Viaggio',
-            color: const Color(0xFFF59E0B),
-            enabled: false,
-          ),
-        ),
+        const SizedBox(width: 10),
+        const Icon(Icons.notifications, size: 18),
       ],
     );
   }
+}
 
-  Widget _buildServiceCard({
-    required IconData icon,
-    required String label,
-    required Color color,
-    bool enabled = true,
-  }) {
-    return Opacity(
-      opacity: enabled ? 1.0 : 0.45,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: enabled
-              ? [
-                  BoxShadow(
-                    color: color.withOpacity(0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
-          border: enabled ? null : Border.all(color: const Color(0xFFE5E7EB)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: enabled ? const Color(0xFF374151) : const Color(0xFF9CA3AF),
-              ),
-            ),
-            if (!enabled)
-              const Text('Presto', style: TextStyle(fontSize: 10, color: Color(0xFF9CA3AF))),
-          ],
-        ),
-      ),
-    );
-  }
+class _HeroIntro extends StatelessWidget {
+  const _HeroIntro({required this.quotesCount});
 
-  Widget _buildQuotesSection(List<CompletedQuote> quotes) {
+  final int quotesCount;
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'I Tuoi Preventivi',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF111827)),
-            ),
-            if (quotes.isNotEmpty)
-              Text(
-                '${quotes.length} salvat${quotes.length == 1 ? 'o' : 'i'}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF6B7280),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-          ],
+        Text('Ciao, curator.', style: Theme.of(context).textTheme.displayMedium),
+        const SizedBox(height: 14),
+        Text(
+          quotesCount == 0
+              ? 'Il tuo archivio assicurativo digitale è pronto. Inizia un preventivo per costruire il tuo primo workspace attivo.'
+              : 'Il tuo archivio assicurativo digitale è aggiornato. Al momento hai $quotesCount polizz${quotesCount == 1 ? 'a attiva' : 'e attive'} disponibili per la revisione.',
+          style: Theme.of(context).textTheme.bodyLarge,
         ),
-        const SizedBox(height: 16),
-        if (quotes.isEmpty) _buildEmptyQuotesCard() else _buildQuotesCarousel(quotes),
       ],
     );
   }
+}
 
-  Widget _buildEmptyQuotesCard() {
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.trailing});
+
+  final String title;
+  final String trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.headlineMedium),
+        Text(trailing, style: Theme.of(context).textTheme.labelMedium),
+      ],
+    );
+  }
+}
+
+class _PolicyCard extends StatelessWidget {
+  const _PolicyCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.caption,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? caption;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE5E7EB), style: BorderStyle.solid),
-      ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.description_outlined, color: Color(0xFF9CA3AF), size: 40),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Nessun preventivo',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF374151)),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Avvia una chat con l\'AI per ricevere\nil tuo primo preventivo auto',
-            style: TextStyle(fontSize: 14, color: Color(0xFF9CA3AF), height: 1.5),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuotesCarousel(List<CompletedQuote> quotes) {
-    return SizedBox(
-      height: 200,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        clipBehavior: Clip.none,
-        itemCount: quotes.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 16),
-        itemBuilder: (context, index) {
-          return _buildQuoteCard(quotes[index]);
-        },
-      ),
-    );
-  }
-
-  Widget _buildQuoteCard(CompletedQuote quote) {
-    final dateStr =
-        '${quote.createdAt.day.toString().padLeft(2, '0')}/${quote.createdAt.month.toString().padLeft(2, '0')}/${quote.createdAt.year}';
-
-    return Container(
-      width: 280,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header row
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4F46E5).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.directions_car_rounded, color: Color(0xFF4F46E5), size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      quote.vehicleLabel,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(dateStr, style: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF))),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Driver
-          if (quote.driverLabel.isNotEmpty)
-            Row(
-              children: [
-                const Icon(Icons.person_outline, size: 16, color: Color(0xFF6B7280)),
-                const SizedBox(width: 6),
-                Text(
-                  quote.driverLabel,
-                  style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-                ),
-              ],
+          Icon(icon, size: 24),
+          const SizedBox(height: 42),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
             ),
-
-          if (quote.driver.city != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, size: 16, color: Color(0xFF6B7280)),
-                const SizedBox(width: 6),
-                Text(
-                  quote.driver.city!,
-                  style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-                ),
-              ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 11,
+              letterSpacing: 0.8,
+              color: AppTheme.textTertiary,
+            ),
+          ),
+          if (caption != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              caption!,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textSecondary,
+              ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
 
-          const Spacer(),
+class _RecommendationCard extends StatelessWidget {
+  const _RecommendationCard({
+    required this.icon,
+    required this.body,
+    required this.cta,
+  });
 
-          // Price badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+  final IconData icon;
+  final String body;
+  final String cta;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceMuted,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, size: 18),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.euro_rounded, color: Colors.white, size: 16),
-                const SizedBox(width: 4),
+                Text(body, style: Theme.of(context).textTheme.bodyLarge),
+                const SizedBox(height: 10),
                 Text(
-                  '${quote.totalPrice.toStringAsFixed(2)}/anno',
+                  cta,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
                   ),
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SupportCallout extends StatelessWidget {
+  const _SupportCallout();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        children: [
+          Text(
+            'Domande sulla tua copertura?',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'I nostri curator sono disponibili 24/7 per aiutarti a navigare polizze e sinistri.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 22),
+          ElevatedButton(
+            onPressed: () {},
+            child: const Text('Hai bisogno di aiuto?'),
           ),
         ],
       ),

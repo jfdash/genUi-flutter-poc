@@ -1,0 +1,1 @@
+enum ChatMode { general, quoteFlow }

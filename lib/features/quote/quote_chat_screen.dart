@@ -1,12 +1,10 @@
-// lib/features/quote/screens/quote_chat_screen_event_driven.dart
-
 import 'package:flutter/material.dart';
-import 'package:gen_ui_poc/core/event/event_aggregator.dart';
+import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
 import 'package:gen_ui_poc/core/service/ai_service.dart';
-import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
-
+import 'package:gen_ui_poc/core/theme/app_theme.dart';
+import 'package:gen_ui_poc/features/quote/widgets/chat_quotes_widgets.dart';
 import 'package:genui/genui.dart';
+import 'package:provider/provider.dart';
 
 class QuoteChatScreenEventDriven extends StatelessWidget {
   const QuoteChatScreenEventDriven({super.key});
@@ -34,38 +32,21 @@ class _QuoteChatViewState extends State<_QuoteChatView> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeChat();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeChat());
   }
 
   void _initializeChat() {
     final aiService = context.read<AIServiceEventDriven>();
-
-    // Callback per navigare alla conferma quando il preventivo è completato
     aiService.onQuoteCompleted = (quote) {
-      // Attendi che l'AI mostri il riepilogo, poi naviga
-      Future.delayed(const Duration(seconds: 2), () {
+      Future.delayed(const Duration(milliseconds: 250), () {
         if (mounted) {
-          // Reset chat allo stato iniziale
-          aiService.reset();
-          aiService.addMessage(
-            'assistant',
-            'Ciao! Sono il tuo assistente AI per preventivi auto.\n\n'
-                'Scrivi "preventivo" o "iniziamo" per partire!',
-          );
-          context.push('/confirmation', extra: quote);
+          _scrollToBottom();
         }
       });
     };
 
-    // Messaggio di benvenuto
     if (aiService.messages.isEmpty) {
-      aiService.addMessage(
-        'assistant',
-        'Ciao! Sono il tuo assistente AI per preventivi auto.\n\n'
-            'Scrivi "preventivo" o "iniziamo" per partire!',
-      );
+      aiService.addMessage('assistant', aiService.welcomeMessage);
     }
   }
 
@@ -76,28 +57,31 @@ class _QuoteChatViewState extends State<_QuoteChatView> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
   void _sendMessage() {
     final aiService = context.read<AIServiceEventDriven>();
-    if (aiService.isLoading) return;
+    if (aiService.isLoading) {
+      return;
+    }
 
     final message = _messageController.text.trim();
-    if (message.isEmpty) return;
+    if (message.isEmpty) {
+      return;
+    }
 
     aiService.sendMessage(message);
     _messageController.clear();
-    _scrollToBottom();
+    Future.delayed(const Duration(milliseconds: 250), _scrollToBottom);
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -105,313 +89,400 @@ class _QuoteChatViewState extends State<_QuoteChatView> {
     final aiService = context.watch<AIServiceEventDriven>();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        title: const Row(
+      backgroundColor: AppTheme.background,
+      body: SafeArea(
+        child: Column(
           children: [
-            Icon(Icons.smart_toy, color: Color(0xFF4F46E5), size: 24),
-            SizedBox(width: 8),
-            Text(
-              'Assicurazione AI',
-              style: TextStyle(color: Colors.black),
-              overflow: TextOverflow.ellipsis,
-            ),
+            _ChatTopBar(aiService: aiService),
+            Expanded(child: _buildContent(aiService)),
           ],
         ),
-        actions: [
-          // Debug: mostra contatore eventi
-          _buildEventCounter(aiService),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.grey),
-            onPressed: () => aiService.reset(),
-            tooltip: 'Reset conversazione',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (aiService.isLoading)
-            const LinearProgressIndicator(
-              backgroundColor: Colors.transparent,
-              valueColor: AlwaysStoppedAnimation(Color(0xFF4F46E5)),
-            ),
-
-          // ═══════════════════════════════════════════════════════
-          // AREA MESSAGGI + WIDGET
-          // ═══════════════════════════════════════════════════════
-          Expanded(
-            child: ChangeNotifierProvider<EventAggregator>.value(
-              value: aiService.eventAggregator,
-              child: _buildMessageList(aiService),
-            ),
-          ),
-
-          // Error display
-          if (aiService.error != null) _buildErrorBanner(aiService.error!),
-
-          // Input bar
-          _buildInputBar(aiService),
-        ],
       ),
     );
   }
 
-  Widget _buildEventCounter(AIServiceEventDriven aiService) {
-    return Consumer<AIServiceEventDriven>(
-      builder: (context, service, _) {
-        final count = service.eventAggregator.collectedData.length;
-        if (count == 0) return const SizedBox.shrink();
-
-        return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xFF4F46E5).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(16),
+  Widget _buildContent(AIServiceEventDriven aiService) {
+    return Stack(
+      children: [
+        ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 146),
+          itemCount: aiService.messages.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return const _ChatHero();
+            }
+            final message = aiService.messages[index - 1];
+            return _buildMessage(aiService, message);
+          },
+        ),
+        if (aiService.error != null)
+          Positioned(
+            left: 18,
+            right: 18,
+            bottom: 104,
+            child: _ErrorBanner(error: aiService.error!),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.data_object, size: 16, color: Color(0xFF4F46E5)),
-              const SizedBox(width: 4),
-              Text(
-                '$count campi',
-                style: const TextStyle(
-                  color: Color(0xFF4F46E5),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 12,
+          child: _InputBar(
+            controller: _messageController,
+            isLoading: aiService.isLoading,
+            onSend: _sendMessage,
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 
-  Widget _buildMessageList(AIServiceEventDriven aiService) {
-    // Trova l'ultimo widget message per mostrare solo quello
+  Widget _buildMessage(
+    AIServiceEventDriven aiService,
+    Map<String, dynamic> message,
+  ) {
+    final role = message['role'] as String;
     final lastWidgetMessage = aiService.messages
         .where((m) => m['role'] == 'assistant_widget')
         .lastOrNull;
     final lastWidgetSurfaceId = lastWidgetMessage?['surfaceId'] as String?;
 
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(16),
-      itemCount: aiService.messages.length,
-      itemBuilder: (context, index) {
-        final msg = aiService.messages[index];
-        final role = msg['role'] as String;
-
-        // Messaggio utente
-        if (role == 'user') {
-          return _UserMessageBubble(
-            message: msg['content'] as String,
-            timestamp: msg['timestamp'] as DateTime,
-          );
-        }
-
-        // Messaggio assistente (testo)
-        if (role == 'assistant') {
-          return _AssistantMessageBubble(
-            message: msg['content'] as String,
-            timestamp: msg['timestamp'] as DateTime,
-          );
-        }
-
-        // Widget GenUI - mostra SOLO l'ultimo
-        if (role == 'assistant_widget') {
-          final surfaceId = msg['surfaceId'] as String?;
-
-          // Salta se non è l'ultimo widget
-          if (surfaceId != lastWidgetSurfaceId) {
-            return const SizedBox.shrink();
-          }
-
-          if (surfaceId == null || aiService.conversation == null) {
-            return const SizedBox.shrink();
-          }
-
-          return _WidgetSurface(host: aiService.conversation!.host, surfaceId: surfaceId);
-        }
-
-        return const SizedBox.shrink();
-      },
-    );
-  }
-
-  Widget _buildErrorBanner(String error) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      color: Colors.red.shade50,
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(error, style: TextStyle(color: Colors.red.shade700, fontSize: 13)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInputBar(AIServiceEventDriven aiService) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _messageController,
-                enabled: !aiService.isLoading,
-                decoration: InputDecoration(
-                  hintText: aiService.isLoading
-                      ? 'L\'AI sta elaborando...'
-                      : 'Scrivi un messaggio...',
-                  filled: true,
-                  fillColor: Colors.grey.shade100,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                ),
-                onSubmitted: (_) => _sendMessage(),
-              ),
-            ),
-            const SizedBox(width: 12),
-            _buildSendButton(aiService),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSendButton(AIServiceEventDriven aiService) {
-    if (aiService.isLoading) {
-      return Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(color: Colors.grey.shade200, shape: BoxShape.circle),
-        child: const Center(
-          child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
-        ),
-      );
+    if (role == 'user') {
+      return _UserMessageBlock(message: message['content'] as String);
     }
 
-    return GestureDetector(
-      onTap: _sendMessage,
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: const BoxDecoration(color: Color(0xFF4F46E5), shape: BoxShape.circle),
-        child: const Icon(Icons.send, color: Colors.white, size: 22),
-      ),
-    );
+    if (role == 'assistant') {
+      return _AssistantMessageBlock(message: message['content'] as String);
+    }
+
+    if (role == 'assistant_quotes_list') {
+      return ChatQuotesList(quotes: (message['quotes'] as List).cast<CompletedQuote>());
+    }
+
+    if (role == 'assistant_quotes_empty') {
+      return const ChatEmptyQuotesState();
+    }
+
+    if (role == 'assistant_widget') {
+      final surfaceId = message['surfaceId'] as String?;
+      if (surfaceId == null ||
+          aiService.host == null ||
+          surfaceId != lastWidgetSurfaceId) {
+        return const SizedBox.shrink();
+      }
+      return _WidgetSurface(host: aiService.host!, surfaceId: surfaceId);
+    }
+
+    return const SizedBox.shrink();
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// MESSAGE BUBBLES
-// ═══════════════════════════════════════════════════════════════════
+class _ChatTopBar extends StatelessWidget {
+  const _ChatTopBar({required this.aiService});
 
-class _UserMessageBubble extends StatelessWidget {
-  final String message;
-  final DateTime timestamp;
-
-  const _UserMessageBubble({required this.message, required this.timestamp});
+  final AIServiceEventDriven aiService;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12, left: 48),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF4F46E5),
-          borderRadius: BorderRadius.circular(20).copyWith(bottomRight: const Radius.circular(4)),
-        ),
-        child: Text(message, style: const TextStyle(color: Colors.white, fontSize: 15)),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppTheme.accentSoft,
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: const Icon(Icons.shield_outlined, size: 18),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Assistente AI',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (aiService.activeFieldCount > 0)
+            Container(
+              margin: const EdgeInsets.only(right: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceMuted,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${aiService.activeFieldCount} FIELDS',
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+              ),
+            ),
+          IconButton(
+            onPressed: aiService.reset,
+            icon: const Icon(Icons.notifications, size: 18),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _AssistantMessageBubble extends StatelessWidget {
-  final String message;
-  final DateTime timestamp;
+class _ChatHero extends StatelessWidget {
+  const _ChatHero();
 
-  const _AssistantMessageBubble({required this.message, required this.timestamp});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24, top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(width: 3, height: 122, color: AppTheme.textPrimary),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'STATO ASSISTENTE: ATTIVO',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Come posso proteggere i tuoi beni oggi?',
+                      style: Theme.of(context).textTheme.displayMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 26),
+          const Text(
+            'RISPOSTA CURATOR AI',
+            style: TextStyle(
+              fontSize: 12,
+              letterSpacing: 1.3,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UserMessageBlock extends StatelessWidget {
+  const _UserMessageBlock({required this.message});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12, right: 48),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 18, right: 44, top: 8),
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20).copyWith(bottomLeft: const Radius.circular(4)),
-          border: Border.all(color: Colors.grey.shade200),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppTheme.border),
         ),
-        child: Text(message, style: const TextStyle(color: Colors.black87, fontSize: 15)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              message,
+              style: const TextStyle(
+                fontSize: 16,
+                height: 1.55,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                '10:42 AM',
+                style: TextStyle(fontSize: 12, color: AppTheme.textTertiary),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// WIDGET SURFACE - Container per widget GenUI
-// ═══════════════════════════════════════════════════════════════════
+class _AssistantMessageBlock extends StatelessWidget {
+  const _AssistantMessageBlock({required this.message});
 
-class _WidgetSurface extends StatelessWidget {
-  final GenUiHost host;
-  final String surfaceId;
-
-  const _WidgetSurface({required this.host, required this.surfaceId});
+  final String message;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 18, right: 38),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: AppTheme.action,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          height: 1.55,
+        ),
+      ),
+    );
+  }
+}
+
+class _WidgetSurface extends StatelessWidget {
+  const _WidgetSurface({required this.host, required this.surfaceId});
+
+  final GenUiHost host;
+  final String surfaceId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 18),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF4F46E5).withOpacity(0.2)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF4F46E5).withOpacity(0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
       ),
       child: GenUiSurface(
         host: host,
         surfaceId: surfaceId,
-        defaultBuilder: (context) => const Center(
-          child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()),
+        defaultBuilder: (context) => const Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
         ),
+      ),
+    );
+  }
+}
+
+class _InputBar extends StatelessWidget {
+  const _InputBar({
+    required this.controller,
+    required this.isLoading,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final bool isLoading;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.97),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.07),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+        child: Row(
+          children: [
+            const Icon(Icons.attach_file_rounded, color: AppTheme.textSecondary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                enabled: !isLoading,
+                decoration: const InputDecoration(
+                  hintText: 'Chiedi all’assistente AI qualsiasi cosa sulla tua copertura...',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onSubmitted: (_) => onSend(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: isLoading ? null : onSend,
+              child: Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: AppTheme.action,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Center(
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF1F1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF0CECE)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, color: Color(0xFF9F3131), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              error,
+              style: const TextStyle(color: Color(0xFF9F3131), fontSize: 13),
+            ),
+          ),
+        ],
       ),
     );
   }

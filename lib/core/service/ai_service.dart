@@ -1,49 +1,77 @@
 // lib/core/service/ai_service_event_driven.dart
 
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:gen_ui_poc/core/ai/genui/event_driven_widget.dart';
+import 'package:gen_ui_poc/core/ai/genui/genui_chat_adapter.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
-import 'package:gen_ui_poc/core/event/event_aggregator.dart';
 import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
-import 'package:gen_ui_poc/core/model/cover_suggestion_model.dart';
-import 'package:gen_ui_poc/core/model/driver_data_model.dart';
-import 'package:gen_ui_poc/core/model/vehicle_data_model.dart';
+import 'package:gen_ui_poc/features/chat/application/chat_intent_detector.dart';
+import 'package:gen_ui_poc/features/chat/application/chat_orchestrator.dart';
+import 'package:gen_ui_poc/features/chat/application/chat_request_normalizer.dart';
+import 'package:gen_ui_poc/features/chat/application/models/chat_mode.dart';
+import 'package:gen_ui_poc/features/chat/application/models/chat_response_plan.dart';
+import 'package:gen_ui_poc/features/chat/application/models/quote_flow_config.dart';
+import 'package:gen_ui_poc/features/quote/application/models/quote_completion_result.dart';
+import 'package:gen_ui_poc/features/quote/application/models/quote_flow_state.dart';
+import 'package:gen_ui_poc/features/quote/application/models/quote_flow_status.dart';
+import 'package:gen_ui_poc/features/quote/application/quote_flow_orchestrator.dart';
+import 'package:gen_ui_poc/features/quote/core/models/quote_field_definition.dart';
+import 'package:gen_ui_poc/features/quote/core/models/quote_field_widget_type.dart';
+import 'package:gen_ui_poc/features/quote/core/models/quote_product.dart';
+import 'package:gen_ui_poc/features/quote/core/quote_product_registry.dart';
 import 'package:gen_ui_poc/features/quote/services/coverage_calculator.dart';
 import 'package:genui/genui.dart';
-import 'package:genui_google_generative_ai/genui_google_generative_ai.dart';
-import 'package:uuid/uuid.dart';
 
 class AIServiceEventDriven extends ChangeNotifier {
-  GoogleGenerativeAiContentGenerator? _contentGenerator;
-  GenUiConversation? _conversation;
-  late final Catalog _catalog;
-  late final A2uiMessageProcessor _a2uiMessageProcessor;
-  late final EventAggregator _eventAggregator;
+  static const _quoteSurfaceId = 'auto_quote_flow';
+  static const _quoteSubmitAction = 'quote_step_submit';
+
+  GenUiChatAdapter? _genUiAdapter;
 
   bool _isInitialized = false;
   String? _error;
   final List<Map<String, dynamic>> _messages = [];
   bool _isLoading = false;
+  bool _pendingGenUiTurn = false;
+  bool _surfaceReceivedInPendingTurn = false;
+  int _invalidQuoteSurfaceRetryCount = 0;
 
-  // Quote completion tracking
   bool _quoteCompleted = false;
   CompletedQuote? _lastCompletedQuote;
+  ChatMode _chatMode = ChatMode.general;
+  final ChatIntentDetector _intentDetector = ChatIntentDetector();
+  final ChatRequestNormalizer _requestNormalizer = ChatRequestNormalizer();
+  final ChatOrchestrator _chatOrchestrator = const ChatOrchestrator();
+  final QuoteProductRegistry _productRegistry = QuoteProductRegistry();
+  QuoteFlowConfig _activeQuoteConfig = const QuoteFlowConfig(
+    product: QuoteProduct.auto,
+  );
+  QuoteFlowState? _activeFlowState;
+  late final QuoteFlowOrchestrator _quoteFlowOrchestrator;
 
-  // Callback per notificare il completamento del preventivo
   void Function(CompletedQuote quote)? onQuoteCompleted;
 
-  // Getters
   bool get isInitialized => _isInitialized;
   String? get error => _error;
   List<Map<String, dynamic>> get messages => _messages;
   bool get isLoading => _isLoading;
-  GenUiConversation? get conversation => _conversation;
-  A2uiMessageProcessor get messageProcessor => _a2uiMessageProcessor;
-  EventAggregator get eventAggregator => _eventAggregator;
+  GenUiHost? get host => _genUiAdapter?.host;
+  A2uiMessageProcessor? get messageProcessor => _genUiAdapter?.messageProcessor;
   bool get quoteCompleted => _quoteCompleted;
   CompletedQuote? get lastCompletedQuote => _lastCompletedQuote;
+  ChatMode get chatMode => _chatMode;
+  int get activeFieldCount =>
+      _chatMode == ChatMode.quoteFlow
+          ? _activeFlowState?.draft.collectedData.length ?? 0
+          : 0;
+  String get welcomeMessage =>
+      'Ciao! Posso aiutarti a vedere i tuoi preventivi, crearne uno nuovo '
+      'o spiegarti le coperture assicurative.\n\n'
+      'Prova con "mostrami i miei preventivi", "voglio un nuovo preventivo auto" '
+      'oppure "mi serve un preventivo viaggio".';
 
   AIServiceEventDriven() {
     _initialize();
@@ -51,6 +79,12 @@ class AIServiceEventDriven extends ChangeNotifier {
 
   void _initialize() {
     try {
+      _quoteFlowOrchestrator = QuoteFlowOrchestrator(
+        productRegistry: _productRegistry,
+        quoteStorageRepository: quoteStorageRepository,
+        coverageCalculator: CoverageCalculator(),
+      );
+
       final apiKey = dotenv.env['GOOGLE_AI_API_KEY'];
       if (apiKey == null || apiKey.isEmpty) {
         _error = 'API Key non configurata';
@@ -59,169 +93,224 @@ class AIServiceEventDriven extends ChangeNotifier {
         return;
       }
 
-      // ═══════════════════════════════════════════════════════════
-      // 1. EVENT AGGREGATOR - Cuore del sistema event-driven
-      // ═══════════════════════════════════════════════════════════
-      _eventAggregator = EventAggregator(onReadyForAI: _onEventContextReady);
-
-      // ═══════════════════════════════════════════════════════════
-      // 2. CATALOGS - Solo Event-Driven Custom + layout base
-      // ═══════════════════════════════════════════════════════════
-      // NOTA: NON includere CoreCatalogItems perché i widget core (Button, ecc.)
-      // usano dispatchEvent(UserActionEvent) che bypassa il nostro EventAggregator
-      // e triggera direttamente GenUI → sendRequest → AI, causando avanzamenti
-      // involontari del form.
-      final coreCatalog = CoreCatalogItems.asCatalog();
-      final eventDrivenCatalog = EventDrivenCatalog.build();
-
-      // Prendiamo solo i widget di layout dal core (Column, Row, ecc.)
-      // escludendo quelli interattivi che dispatchano eventi autonomamente
-      final safeCoreName = {'Column', 'Row', 'Text', 'Divider', 'Icon', 'Image'};
-      final safeCoreItems = coreCatalog.items
-          .where((item) => safeCoreName.contains(item.name))
-          .toList();
-
-      _catalog = Catalog(catalogId: 'event_driven_merged_1_0_0', [
-        ...safeCoreItems,
-        ...eventDrivenCatalog.items,
-      ]);
-
-      debugPrint('Catalog: ${_catalog.items.length} widgets');
-
-      // ═══════════════════════════════════════════════════════════
-      // 3. MESSAGE PROCESSOR
-      // ═══════════════════════════════════════════════════════════
-      _a2uiMessageProcessor = A2uiMessageProcessor(catalogs: [_catalog]);
-
-      // ═══════════════════════════════════════════════════════════
-      // 4. CONTENT GENERATOR con System Instruction Event-Driven
-      // ═══════════════════════════════════════════════════════════
-      _contentGenerator = GoogleGenerativeAiContentGenerator(
-        catalog: _catalog,
-        systemInstruction: _getEventDrivenSystemInstruction(),
-        modelName: 'models/gemini-2.5-flash',
+      _genUiAdapter = GenUiChatAdapter(
         apiKey: apiKey,
+        systemInstruction: _getEventDrivenSystemInstruction(),
+        onSurfaceAdded: _handleSurfaceAdded,
+        onSurfaceUpdated: _handleSurfaceUpdated,
+        onTextResponse: _handleTextResponse,
+        onUserInteraction: _handleUserInteraction,
+        onError: _handleGenUiError,
       );
-
-      // ═══════════════════════════════════════════════════════════
-      // 5. CONVERSATION
-      // ═══════════════════════════════════════════════════════════
-      _createConversation();
 
       _isInitialized = true;
       _error = null;
       notifyListeners();
-      debugPrint(' AIServiceEventDriven initialized');
     } catch (e, stack) {
       _error = 'Errore: $e';
       _isInitialized = false;
-      debugPrint(' Init error: $e\n$stack');
+      debugPrint('Init error: $e\n$stack');
       notifyListeners();
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // CONVERSATION FACTORY — usata da _initialize() e reset()
-  // ═══════════════════════════════════════════════════════════════
-  void _createConversation() {
-    _conversation = GenUiConversation(
-      contentGenerator: _contentGenerator!,
-      a2uiMessageProcessor: _a2uiMessageProcessor,
-      onSurfaceAdded: (update) {
-        debugPrint(' SURFACE ADDED: ${update.surfaceId}');
-
-        // Rimuovi i widget precedenti per mantenere solo l'ultimo
-        _messages.removeWhere((m) => m['role'] == 'assistant_widget');
-
-        _messages.add({
-          'role': 'assistant_widget',
-          'surfaceId': update.surfaceId,
-          'timestamp': DateTime.now(),
-        });
-        _isLoading = false;
-        notifyListeners();
-      },
-      onSurfaceUpdated: (update) {
-        debugPrint(' SURFACE UPDATED: ${update.surfaceId}');
-        _isLoading = false;
-        notifyListeners();
-      },
-      onTextResponse: (text) {
-        // Testo puro (senza widget)
-        if (text.trim().isNotEmpty) {
-          _messages.add({'role': 'assistant', 'content': text, 'timestamp': DateTime.now()});
-          _isLoading = false;
-          notifyListeners();
-        }
-      },
-      onError: (error) {
-        debugPrint(' Error: ${error.error}');
-        _error = error.error.toString();
-        _isLoading = false;
-        notifyListeners();
-      },
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // EVENT CALLBACK - Chiamato automaticamente dall'EventAggregator
-  // ═══════════════════════════════════════════════════════════════
-  void _onEventContextReady(EventContext context) {
-    debugPrint('🚀 ═══════════════════════════════════════════');
-    debugPrint('🚀 AI TRIGGERED BY EVENTS');
-    debugPrint('🚀 ${context.toPromptString()}');
-    debugPrint('🚀 ═══════════════════════════════════════════');
-
-    // Controlla se abbiamo tutti i dati necessari (Step 3 completato → genera quote)
-    // Fallback: dopo 3 trigger (1 per step) completa comunque
-    if (_hasAllRequiredData(context.collectedData) || _eventAggregator.triggerCount >= 3) {
-      _completeQuote(context.collectedData);
-      // Stop: preventivo completato, non inviare altre richieste all'AI
+  void _handleSurfaceAdded(SurfaceAdded update) {
+    if (!_acceptSurfaceUpdate(update.definition)) {
       return;
     }
 
-    // Costruisci un messaggio automatico con il contesto
-    final autoMessage = _buildContextMessage(context);
-
-    // Invia all'AI
-    _sendInternalMessage(autoMessage);
-  }
-
-  String _buildContextMessage(EventContext context) {
-    final buffer = StringBuffer();
-
-    buffer.writeln('[DATI INSERITI DALL\'UTENTE]');
-    context.collectedData.forEach((key, value) {
-      buffer.writeln('$key: $value');
+    _surfaceReceivedInPendingTurn = true;
+    _messages.removeWhere((m) => m['role'] == 'assistant_widget');
+    _messages.add({
+      'role': 'assistant_widget',
+      'surfaceId': update.surfaceId,
+      'timestamp': DateTime.now(),
     });
-
-    buffer.writeln();
-    buffer.writeln('Procedi con i prossimi campi da raccogliere.');
-
-    return buffer.toString();
+    _isLoading = false;
+    notifyListeners();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // PUBLIC METHODS
-  // ═══════════════════════════════════════════════════════════════
+  void _handleSurfaceUpdated(SurfaceUpdated update) {
+    if (!_acceptSurfaceUpdate(update.definition)) {
+      return;
+    }
+
+    _surfaceReceivedInPendingTurn = true;
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  void _handleTextResponse(String text) {
+    if (text.trim().isEmpty) {
+      _pendingGenUiTurn = false;
+      _isLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    if (_shouldSuppressInternalQuoteFlowText(text)) {
+      _pendingGenUiTurn = false;
+      _surfaceReceivedInPendingTurn = false;
+      _isLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    if (_pendingGenUiTurn && _surfaceReceivedInPendingTurn) {
+      _pendingGenUiTurn = false;
+      _surfaceReceivedInPendingTurn = false;
+      _isLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    _messages.add({
+      'role': 'assistant',
+      'content': text,
+      'timestamp': DateTime.now(),
+    });
+    _isLoading = false;
+    _pendingGenUiTurn = false;
+    _surfaceReceivedInPendingTurn = false;
+    notifyListeners();
+  }
+
+  void _handleGenUiError(ContentGeneratorError error) {
+    _error = error.error.toString();
+    _isLoading = false;
+    _pendingGenUiTurn = false;
+    _surfaceReceivedInPendingTurn = false;
+    notifyListeners();
+  }
+
+  Future<void> _handleUserInteraction(UserUiInteractionMessage message) async {
+    final payload = _parseUiInteraction(message.text);
+    if (payload == null) {
+      return;
+    }
+
+    final actionName = payload['name'] as String?;
+    if (actionName != _quoteSubmitAction) {
+      await _sendUiInteractionMessage(message);
+      return;
+    }
+
+    final context = (payload['context'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final stepId = context['step_id'] as String?;
+    final surfaceId = payload['surfaceId'] as String? ?? _quoteSurfaceId;
+
+    if (_chatMode != ChatMode.quoteFlow || stepId == null) {
+      await _sendUiInteractionMessage(message);
+      return;
+    }
+
+    final collectedData = _extractCollectedDataFromSurface(surfaceId);
+    final flowState = _quoteFlowOrchestrator.createFlowState(
+      config: _activeQuoteConfig,
+      collectedData: collectedData,
+      status: QuoteFlowStatus.active,
+    );
+    _activeFlowState = flowState;
+    notifyListeners();
+
+    if (flowState.canComplete) {
+      await _completeQuote(flowState);
+      return;
+    }
+
+    await _sendUiInteractionMessage(message);
+  }
 
   void addMessage(String role, String content) {
-    _messages.add({'role': role, 'content': content, 'timestamp': DateTime.now()});
+    _messages.add({
+      'role': role,
+      'content': content,
+      'timestamp': DateTime.now(),
+    });
+    notifyListeners();
+  }
+
+  void addStructuredMessage(String role, Map<String, dynamic> data) {
+    _messages.add({'role': role, ...data, 'timestamp': DateTime.now()});
     notifyListeners();
   }
 
   Future<void> sendMessage(String text) async {
-    if (_conversation == null) return;
+    if (_genUiAdapter == null) return;
 
-    _messages.add({'role': 'user', 'content': text, 'timestamp': DateTime.now()});
-
-    _isLoading = true;
+    _messages.add({
+      'role': 'user',
+      'content': text,
+      'timestamp': DateTime.now(),
+    });
     _error = null;
     notifyListeners();
 
+    final intent = _intentDetector.detect(
+      text,
+      isQuoteFlowActive: _chatMode == ChatMode.quoteFlow,
+      hasPausedQuoteFlow: _activeFlowState?.isPaused ?? false,
+    );
+    final request = _requestNormalizer.normalize(
+      originalText: text,
+      intent: intent,
+    );
+
+    final shouldResumePausedFlow =
+        _activeFlowState?.isPaused == true &&
+        _intentDetector.looksLikeContinuation(text);
+    if (shouldResumePausedFlow) {
+      await _resumePausedQuoteFlow();
+      return;
+    }
+
+    final plan = _chatOrchestrator.buildPlan(
+      request: request,
+      currentMode: _chatMode,
+      hasInProgressQuoteFlow:
+          _activeFlowState != null &&
+          _activeFlowState!.status == QuoteFlowStatus.active,
+    );
+
+    await _handleResponsePlan(plan);
+  }
+
+  Future<void> _handleResponsePlan(ChatResponsePlan plan) async {
+    switch (plan) {
+      case ShowQuotesListPlan():
+        if (plan.pauseInProgressQuoteFlow) {
+          _pauseActiveQuoteFlow();
+          addMessage(
+            'assistant',
+            'Ho messo in pausa il flusso preventivo e ti mostro i preventivi salvati.',
+          );
+        }
+        _showSavedQuotes();
+      case StartQuoteFlowPlan():
+        await _startQuoteFlow(plan.config);
+      case AnswerWithModelPlan():
+        if (plan.pauseInProgressQuoteFlow) {
+          _pauseActiveQuoteFlow();
+          addMessage(
+            'assistant',
+            'Ho messo in pausa il flusso preventivo per rispondere alla tua richiesta.',
+          );
+        }
+        await _sendConversationMessage(plan.prompt);
+    }
+  }
+
+  Future<void> _sendConversationMessage(String text) async {
+    if (_genUiAdapter == null) return;
+
+    _isLoading = true;
+    _error = null;
+    _pendingGenUiTurn = true;
+    _surfaceReceivedInPendingTurn = false;
+    notifyListeners();
+
     try {
-      debugPrint('📤 User message: $text');
-      await _conversation!.sendRequest(UserMessage.text(text));
+      await _genUiAdapter!.sendText(text);
     } catch (e) {
       _error = e.toString();
       _isLoading = false;
@@ -229,256 +318,510 @@ class AIServiceEventDriven extends ChangeNotifier {
     }
   }
 
-  /// Messaggio interno (non mostrato nella UI come messaggio utente)
-  Future<void> _sendInternalMessage(String text) async {
-    if (_conversation == null) return;
+  Future<void> _sendUiInteractionMessage(UserUiInteractionMessage message) async {
+    if (_genUiAdapter == null) return;
 
     _isLoading = true;
     _error = null;
+    _pendingGenUiTurn = true;
+    _surfaceReceivedInPendingTurn = false;
     notifyListeners();
 
     try {
-      debugPrint('🤖 Internal message: $text');
-      await _conversation!.sendRequest(UserMessage.text(text));
+      await _genUiAdapter!.sendUiInteraction(message);
     } catch (e) {
       _error = e.toString();
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _startQuoteFlow(QuoteFlowConfig config) async {
+    final productModule = _productRegistry.getModule(config.product);
+    if (productModule == null) {
+      addMessage(
+        'assistant',
+        'Questo prodotto non è ancora disponibile in chat. Per ora posso aiutarti con i preventivi auto.',
+      );
+      return;
+    }
+    if (!productModule.isFlowSupportedInChat) {
+      addMessage(
+        'assistant',
+        'I preventivi ${productModule.displayName.toLowerCase()} non sono ancora disponibili in chat. '
+            'Per ora posso aiutarti con i preventivi auto.',
+      );
+      return;
+    }
+
+    _activeQuoteConfig = config;
+    _chatMode = ChatMode.quoteFlow;
+    _quoteCompleted = false;
+    _lastCompletedQuote = null;
+
+    _restartConversation();
+    _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    notifyListeners();
+
+    final initialFlowState = _quoteFlowOrchestrator.createFlowState(
+      config: config,
+      collectedData: const {},
+      status: QuoteFlowStatus.active,
+    );
+    _activeFlowState = initialFlowState;
+    await _requestQuoteStepFromGenUi(initialFlowState, isInitialRender: true);
+  }
+
+  void _showSavedQuotes() {
+    _chatMode = ChatMode.general;
+    _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    _restartConversation();
+
+    final quotes = quoteStorageRepository.getAllQuotes();
+    if (quotes.isEmpty) {
+      addStructuredMessage('assistant_quotes_empty', {});
+      return;
+    }
+
+    addStructuredMessage('assistant_quotes_list', {'quotes': quotes});
+  }
+
+  void _pauseActiveQuoteFlow() {
+    if (_activeFlowState == null) {
+      return;
+    }
+
+    _activeFlowState = _activeFlowState!.copyWith(
+      status: QuoteFlowStatus.paused,
+    );
+    _chatMode = ChatMode.general;
+    _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    _restartConversation();
+  }
+
+  Future<void> _resumePausedQuoteFlow() async {
+    final pausedState = _activeFlowState;
+    if (pausedState == null || !pausedState.isPaused) {
+      return;
+    }
+
+    _chatMode = ChatMode.quoteFlow;
+    _activeQuoteConfig = pausedState.draft.config;
+    _restartConversation();
+    _activeFlowState = pausedState.copyWith(status: QuoteFlowStatus.active);
+    await _requestQuoteStepFromGenUi(_activeFlowState!);
+  }
+
+  void _restartConversation() {
+    _error = null;
+    _isLoading = false;
+    _pendingGenUiTurn = false;
+    _surfaceReceivedInPendingTurn = false;
+    _invalidQuoteSurfaceRetryCount = 0;
+    _genUiAdapter?.restart(
+      systemInstruction: _getEventDrivenSystemInstruction(),
+    );
   }
 
   void reset() {
     _messages.clear();
-    _eventAggregator.reset();
-    _error = null;
-    _isLoading = false;
+    _chatMode = ChatMode.general;
+    _activeFlowState = null;
     _quoteCompleted = false;
     _lastCompletedQuote = null;
-
-    // Ricrea content generator + conversation per azzerare lo storico AI
-    final apiKey = dotenv.env['GOOGLE_AI_API_KEY'];
-    if (apiKey != null && apiKey.isNotEmpty) {
-      _contentGenerator = GoogleGenerativeAiContentGenerator(
-        catalog: _catalog,
-        systemInstruction: _getEventDrivenSystemInstruction(),
-        modelName: 'models/gemini-2.5-flash',
-        apiKey: apiKey,
-      );
-      _createConversation();
-    }
-
+    _restartConversation();
     notifyListeners();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // QUOTE COMPLETION LOGIC
-  // ═══════════════════════════════════════════════════════════════
-
-  bool _hasAllRequiredData(Map<String, dynamic> data) {
-    // Step 1: vehicle base
-    final hasVehicleBase =
-        data.containsKey('vehicle_brand') &&
-        data.containsKey('vehicle_model') &&
-        data.containsKey('vehicle_year');
-
-    // Step 2: vehicle details
-    final hasVehicleDetails =
-        data.containsKey('vehicle_km') ||
-        data.containsKey('vehicle_fuel') ||
-        data.containsKey('vehicle_usage');
-
-    // Step 3: driver
-    final hasDriver =
-        data.containsKey('driver_name') ||
-        data.containsKey('driver_birth_date') ||
-        data.containsKey('driver_city');
-
-    return hasVehicleBase && hasVehicleDetails && hasDriver;
-  }
-
-  void _completeQuote(Map<String, dynamic> data) {
+  Future<void> _completeQuote(QuoteFlowState flowState) async {
     if (_quoteCompleted) return;
 
-    debugPrint('✅ ═══════════════════════════════════════════');
-    debugPrint('✅ QUOTE COMPLETION DETECTED');
-    debugPrint('✅ Data keys: ${data.keys.toList()}');
-    debugPrint('✅ ═══════════════════════════════════════════');
-
     _quoteCompleted = true;
-    CompletedQuote? quote;
-
+    QuoteCompletionResult result = const QuoteCompletionResult.failure(
+      'Completamento non riuscito',
+    );
     try {
-      // Estrai i dati del veicolo
-      final vehicle = VehicleDataModel(
-        brand: data['vehicle_brand']?.toString(),
-        model: data['vehicle_model']?.toString(),
-        year: _parseInt(data['vehicle_year']),
-        annualKm: _parseInt(data['vehicle_km']),
-        fuelType: _parseFuelType(data['vehicle_fuel']?.toString()),
-        usage: _parseUsage(data['vehicle_usage']?.toString()),
-        marketValue: _parseInt(data['vehicle_value']),
-      );
-
-      // Estrai i dati del conducente
-      final driverName = data['driver_name']?.toString() ?? '';
-      final nameParts = driverName.split(' ');
-      final driver = DriverDataModel(
-        firstName: nameParts.isNotEmpty ? nameParts.first : null,
-        lastName: nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null,
-        birthDate: _parseDate(data['driver_birth_date']?.toString()),
-        city: data['driver_city']?.toString(),
-        licenseDate: _parseDate(data['driver_license_year']?.toString()),
-      );
-
-      // Calcola le coperture
-      final calculator = CoverageCalculator();
-      final coverages = calculator.calculateSuggestions(vehicle: vehicle, driver: driver);
-
-      final totalPrice = coverages.fold<double>(0, (sum, c) => sum + c.annualPrice);
-      final essentialPrice = coverages
-          .where((c) => c.level == SuggestionLevel.essential)
-          .fold<double>(0, (sum, c) => sum + c.annualPrice);
-
-      quote = CompletedQuote(
-        id: const Uuid().v4(),
-        vehicle: vehicle,
-        driver: driver,
-        coverages: coverages,
-        totalPrice: totalPrice,
-        essentialPrice: essentialPrice,
-        createdAt: DateTime.now(),
-      );
-
-      // Salva nello storage
-      quoteStorageRepository.saveQuote(quote);
-      debugPrint('✅ Quote saved: ${quote.id} - €${quote.totalPrice}');
+      result = await _quoteFlowOrchestrator.completeQuote(flowState: flowState);
     } catch (e, stack) {
-      debugPrint('❌ Quote completion error: $e\n$stack');
+      debugPrint('Quote completion error: $e\n$stack');
     }
 
-    // Notifica SEMPRE il listener esterno, anche se la creazione ha avuto errori parziali
-    if (quote != null) {
-      _lastCompletedQuote = quote;
+    if (result.quote != null) {
+      _activeFlowState = flowState.copyWith(status: QuoteFlowStatus.completed);
+      _lastCompletedQuote = result.quote;
+      _chatMode = ChatMode.general;
       notifyListeners();
-      onQuoteCompleted?.call(quote);
+      await _requestQuoteSummaryFromGenUi(result.quote!);
+      onQuoteCompleted?.call(result.quote!);
     } else {
-      debugPrint('❌ Quote is null, cannot navigate to confirmation');
-      _quoteCompleted = false; // Permetti un nuovo tentativo
+      _quoteCompleted = false;
+      _error = result.error;
+      notifyListeners();
     }
   }
 
-  int? _parseInt(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is double) return value.toInt();
-    return int.tryParse(value.toString().replaceAll(RegExp(r'[^\d]'), ''));
+  String _getEventDrivenSystemInstruction() {
+    final module = _productRegistry.getModule(_activeQuoteConfig.product);
+    final flowPrompt =
+        module?.buildFlowPromptDescription(_activeQuoteConfig) ??
+        'Nessun flow disponibile per il prodotto corrente.';
+
+    return '''
+Sei un assistente assicurativo AI. Rispondi SEMPRE in italiano.
+
+Puoi rispondere in testo semplice oppure costruire interfacce con i widget del catalogo GenUI.
+Quando lavori nel flusso preventivo:
+- usa SEMPRE e solo la surface con id "$_quoteSurfaceId"
+- aggiorna la stessa surface step dopo step, non crearne di nuove
+- usa i widget core di GenUI: Column, Text, TextField, MultipleChoice, Slider, DateTimeInput, Button, Divider
+- salva i valori nel data model sotto il path "/draft/<field_id>"
+- per MultipleChoice a selezione singola salva l'array su "/draft/<field_id>_selection"
+- il Button finale di ogni step deve dispatchare l'azione "$_quoteSubmitAction"
+- nel context del Button invia almeno il valore letterale "step_id"
+- non produrre testo puro insieme alla surface dello step
+- non mostrare istruzioni interne
+
+Quando ricevi un submit di step, aggiorna la surface "$_quoteSurfaceId" mostrando SOLO lo step successivo.
+Quando ricevi un'istruzione interna di riepilogo finale, aggiorna la stessa surface "$_quoteSurfaceId" con un unico widget quote_compact_summary.
+
+Widget custom disponibili fuori dal wizard o per il riepilogo finale:
+- info_card
+- comparison_card
+- pros_cons_card
+- quote_compact_summary
+
+FLOW CORRENTE:
+$flowPrompt
+''';
   }
 
-  FuelType? _parseFuelType(String? value) {
-    if (value == null) return null;
-    final lower = value.toLowerCase();
-    if (lower.contains('benzina') || lower.contains('gasoline')) return FuelType.gasoline;
-    if (lower.contains('diesel') || lower.contains('gasolio')) return FuelType.diesel;
-    if (lower.contains('ibrid') || lower.contains('hybrid')) return FuelType.hybrid;
-    if (lower.contains('elettric') || lower.contains('electric')) return FuelType.electric;
-    if (lower.contains('gpl') || lower.contains('lpg')) return FuelType.lpg;
-    return null;
+  Future<void> _requestQuoteStepFromGenUi(
+    QuoteFlowState flowState, {
+    bool isInitialRender = false,
+  }) async {
+    _activeFlowState = flowState;
+    _invalidQuoteSurfaceRetryCount = 0;
+    await _sendConversationMessage(
+      _buildQuoteStepInstruction(flowState, isInitialRender: isInitialRender),
+    );
   }
 
-  VehicleUsage? _parseUsage(String? value) {
-    if (value == null) return null;
-    final lower = value.toLowerCase();
-    if (lower.contains('privat') || lower.contains('personal')) return VehicleUsage.personal;
-    if (lower.contains('lavor') || lower.contains('work')) return VehicleUsage.work;
-    if (lower.contains('mist') || lower.contains('mixed')) return VehicleUsage.mixed;
-    return null;
-  }
+  String _buildQuoteStepInstruction(
+    QuoteFlowState flowState, {
+    bool isInitialRender = false,
+  }) {
+    final step = flowState.currentStep;
+    if (step == null) {
+      return '''
+ISTRUZIONE INTERNA:
+Non ci sono altri step da mostrare.
+''';
+    }
 
-  DateTime? _parseDate(String? value) {
-    if (value == null) return null;
-    try {
-      return DateTime.parse(value);
-    } catch (_) {
-      // Prova formato dd/MM/yyyy
-      final parts = value.split(RegExp(r'[/\-.]'));
-      if (parts.length == 3) {
-        try {
-          return DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-        } catch (_) {}
+    final buffer = StringBuffer();
+    buffer.writeln('ISTRUZIONE INTERNA QUOTEFLOW:');
+    buffer.writeln(
+      isInitialRender
+          ? 'Crea adesso la surface "$_quoteSurfaceId" per lo step "${step.title}".'
+          : 'Aggiorna la surface "$_quoteSurfaceId" per lo step "${step.title}".',
+    );
+    buffer.writeln('Renderizza SOLO lo step corrente del prodotto ${flowState.draft.config.product.name}.');
+    buffer.writeln('Usa una Column con ordine: testo contesto, campi dello step, bottone finale.');
+    buffer.writeln('Testo iniziale: "${step.contextMessage}"');
+    buffer.writeln(
+      'Il Button finale deve avere action name "$_quoteSubmitAction" e context esatto con una entry: '
+      '{"key":"step_id","value":{"literalString":"${step.id}"}}.',
+    );
+    buffer.writeln('Campi da mostrare con relativi widget e path:');
+    for (final field in flowState.currentStepFields) {
+      if (flowState.draft.contains(field.id)) {
+        continue;
       }
+      buffer.writeln('- ${_buildNativeFieldInstruction(field)}');
+    }
+    buffer.writeln('Usa un solo Button finale con testo "${step.submitLabel}" e action "$_quoteSubmitAction".');
+    buffer.writeln('Non aggiungere altri step, altri bottoni o testo puro fuori dalla surface.');
+    return buffer.toString().trimRight();
+  }
+
+  String _buildNativeFieldInstruction(QuoteFieldDefinition field) {
+    final path = _pathForField(field.id, field.widgetType);
+    switch (field.widgetType) {
+      case QuoteFieldWidgetType.textInput:
+      case QuoteFieldWidgetType.numberInput:
+        return 'TextField con label "${field.label}", text path "$path"'
+            '${field.widgetType == QuoteFieldWidgetType.numberInput ? ', textFieldType "number"' : ''}';
+      case QuoteFieldWidgetType.slider:
+        return 'Slider con value path "$path", min ${field.minInt ?? 0}, max ${field.maxInt ?? 100} e Text descrittivo "${field.label}"';
+      case QuoteFieldWidgetType.choiceChips:
+        return 'MultipleChoice single-select con selections path "$path", opzioni ${field.options} e label "${field.label}"';
+      case QuoteFieldWidgetType.dateInput:
+        return 'DateTimeInput con value path "$path", enableDate true, enableTime false e Text descrittivo "${field.label}"';
+    }
+  }
+
+  String _pathForField(String fieldId, QuoteFieldWidgetType widgetType) {
+    if (widgetType == QuoteFieldWidgetType.choiceChips) {
+      return '/draft/${fieldId}_selection';
+    }
+    return '/draft/$fieldId';
+  }
+
+  bool _acceptSurfaceUpdate(UiDefinition definition) {
+    final flowState = _activeFlowState;
+    if (_chatMode != ChatMode.quoteFlow || flowState?.currentStep == null) {
+      return true;
+    }
+
+    final validationError = _validateQuoteStepSurface(
+      definition: definition,
+      flowState: flowState!,
+    );
+    if (validationError == null) {
+      _invalidQuoteSurfaceRetryCount = 0;
+      return true;
+    }
+
+    if (_invalidQuoteSurfaceRetryCount < 1) {
+      _invalidQuoteSurfaceRetryCount++;
+      unawaited(_requestQuoteStepCorrection(flowState!, validationError));
+      return false;
+    }
+
+    _error = 'Surface genUi non valida per lo step corrente: $validationError';
+    _isLoading = false;
+    _pendingGenUiTurn = false;
+    _surfaceReceivedInPendingTurn = false;
+    notifyListeners();
+    return false;
+  }
+
+  Future<void> _requestQuoteStepCorrection(
+    QuoteFlowState flowState,
+    String validationError,
+  ) async {
+    _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    final correctionPrompt = StringBuffer()
+      ..writeln(_buildQuoteStepInstruction(flowState))
+      ..writeln()
+      ..writeln('CORREZIONE OBBLIGATORIA:')
+      ..writeln('- La surface precedente non e valida: $validationError')
+      ..writeln('- Rigenera da zero la stessa surface con tutti i campi dello step corrente e un solo Button finale valido.')
+      ..writeln('- Il Button finale deve essere visibile nel tree renderizzato e usare action name "$_quoteSubmitAction".');
+
+    await _sendConversationMessage(correctionPrompt.toString().trimRight());
+  }
+
+  String? _validateQuoteStepSurface({
+    required UiDefinition definition,
+    required QuoteFlowState flowState,
+  }) {
+    final allowedPaths = flowState.currentStepFields
+        .map((field) => _pathForField(field.id, field.widgetType))
+        .toSet();
+    final visibleComponents = _visibleComponents(definition);
+
+    var submitButtons = 0;
+    for (final component in visibleComponents) {
+      final type = component.type;
+      final payload = component.componentProperties[type];
+
+      if (type == 'Button') {
+        if (payload is! Map<String, Object?>) {
+          return 'payload non valido per Button';
+        }
+        final action = payload['action'];
+        if (action is! Map<String, Object?> || action['name'] != _quoteSubmitAction) {
+          return 'Button finale senza action $_quoteSubmitAction';
+        }
+        submitButtons++;
+        continue;
+      }
+
+      final boundPath = _extractBoundPath(type, payload);
+      if (boundPath == null) {
+        continue;
+      }
+      if (!allowedPaths.contains(boundPath)) {
+        return 'path "$boundPath" non previsto nello step ${flowState.currentStep!.id}';
+      }
+    }
+
+    if (submitButtons != 1) {
+      return 'Button finali attesi: 1, trovati: $submitButtons';
+    }
+
+    return null;
+  }
+
+  Iterable<Component> _visibleComponents(UiDefinition definition) sync* {
+    final rootId = definition.rootComponentId;
+    if (rootId == null) {
+      return;
+    }
+
+    final visited = <String>{};
+    final queue = <String>[rootId];
+
+    while (queue.isNotEmpty) {
+      final componentId = queue.removeAt(0);
+      if (!visited.add(componentId)) {
+        continue;
+      }
+
+      final component = definition.components[componentId];
+      if (component == null) {
+        continue;
+      }
+
+      yield component;
+      queue.addAll(_childComponentIds(component));
+    }
+  }
+
+  Iterable<String> _childComponentIds(Component component) sync* {
+    final type = component.type;
+    final payload = component.componentProperties[type];
+    if (payload is! Map<String, Object?>) {
+      return;
+    }
+
+    switch (type) {
+      case 'Column':
+      case 'Row':
+        final children = payload['children'];
+        if (children is Map<String, Object?>) {
+          final explicitList = children['explicitList'];
+          if (explicitList is List) {
+            for (final childId in explicitList.whereType<String>()) {
+              yield childId;
+            }
+          }
+        }
+      case 'Card':
+      case 'Button':
+        final child = payload['child'];
+        if (child is String) {
+          yield child;
+        }
+    }
+  }
+
+  String? _extractBoundPath(String type, Object? payload) {
+    if (payload is! Map<String, Object?>) {
+      return null;
+    }
+
+    switch (type) {
+      case 'TextField':
+        return _extractPath(payload['text']);
+      case 'Slider':
+        return _extractPath(payload['value']);
+      case 'DateTimeInput':
+        return _extractPath(payload['value']);
+      case 'MultipleChoice':
+        return _extractPath(payload['selections']);
+      default:
+        return null;
+    }
+  }
+
+  String? _extractPath(Object? ref) {
+    if (ref is! Map<String, Object?>) {
+      return null;
+    }
+    return ref['path'] as String?;
+  }
+
+  Future<void> _requestQuoteSummaryFromGenUi(CompletedQuote quote) async {
+    await _sendConversationMessage(_buildQuoteSummaryInstruction(quote));
+  }
+
+  String _buildQuoteSummaryInstruction(CompletedQuote quote) {
+    final vehicle = quote.vehicleLabel.isEmpty ? 'preventivo assicurativo' : quote.vehicleLabel;
+    final driver = quote.driverLabel.isEmpty ? 'profilo cliente disponibile' : quote.driverLabel;
+    return '''
+ISTRUZIONE INTERNA:
+Aggiorna la surface "$_quoteSurfaceId" con un unico widget quote_compact_summary.
+
+Valori da usare:
+- quote_id: "${quote.id}"
+- title: "Preventivo pronto"
+- subtitle: "$vehicle per $driver"
+- annual_price: ${quote.totalPrice.toStringAsFixed(0)}
+- essential_price: ${quote.essentialPrice.toStringAsFixed(0)}
+- coverage_count: ${quote.coverages.length}
+- cta_label: "Apri dettaglio"
+
+Non aggiungere testo puro o altri widget.
+''';
+  }
+
+  Map<String, dynamic> _extractCollectedDataFromSurface(String surfaceId) {
+    final dataModel = _genUiAdapter?.messageProcessor?.dataModelForSurface(surfaceId);
+    final rawDraft = (dataModel?.data['draft'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return _normalizeCollectedData(rawDraft);
+  }
+
+  Map<String, dynamic> _normalizeCollectedData(Map<String, dynamic> rawDraft) {
+    final normalized = <String, dynamic>{};
+    rawDraft.forEach((key, value) {
+      if (key.endsWith('_selection') && value is List && value.isNotEmpty) {
+        normalized[key.replaceFirst('_selection', '')] = value.first;
+        return;
+      }
+
+      if (value is double && value == value.roundToDouble()) {
+        normalized[key] = value.toInt();
+        return;
+      }
+
+      normalized[key] = value;
+    });
+    return normalized;
+  }
+
+  Map<String, dynamic>? _parseUiInteraction(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+
+      final userAction = decoded['userAction'];
+      if (userAction is! Map<String, dynamic>) {
+        return null;
+      }
+      return userAction;
+    } catch (_) {
       return null;
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // SYSTEM INSTRUCTION - Ottimizzato per Event-Driven
-  // ═══════════════════════════════════════════════════════════════
-  String _getEventDrivenSystemInstruction() {
-    return '''
-Sei un assistente assicurativo AI per preventivi auto. Rispondi SEMPRE in italiano.
+  bool _shouldSuppressInternalQuoteFlowText(String text) {
+    final normalized = text.trim();
+    if (normalized.startsWith('A user interface is shown with the following content:')) {
+      return true;
+    }
+    if (normalized.contains('"surfaceId"') &&
+        normalized.contains('"rootComponentId"') &&
+        normalized.contains('"components"')) {
+      return true;
+    }
+    if (normalized.startsWith('ISTRUZIONE INTERNA')) {
+      return true;
+    }
 
-⚡ IMPORTANTE: I widget che generi EMETTONO EVENTI AUTOMATICAMENTE.
-Quando l'utente compila i campi, riceverai un messaggio con i dati raccolti.
-NON devi chiedere conferma - i dati arrivano automaticamente!
-
-WIDGET DISPONIBILI (usa i tool/function call per generarli):
-
-1. text_input: Campo testo con id, label, hint
-2. number_input: Campo numerico con id, label, min, max
-3. slider: Cursore per valori range con id, label, min, max, suffix
-4. choice_chips: Selezione singola con id, label, options (array di stringhe)
-5. date_input: Selettore data con id, label
-6. submit_button: Bottone invio con label
-7. text_message: Testo semplice con message
-8. info_card: Card informativa con title, message, type (info/success/warning)
-
-FLUSSO PREVENTIVO AUTO (4 step):
-
-STEP 1 - VEICOLO BASE:
-Genera un form con Column contenente:
-- text_message di benvenuto
-- text_input con id "vehicle_brand", label "Marca", hint "Es: Fiat, BMW, Audi"
-- text_input con id "vehicle_model", label "Modello", hint "Es: Panda, Serie 3"  
-- number_input con id "vehicle_year", label "Anno immatricolazione", min 1990, max 2026
-- submit_button con label "Continua"
-
-STEP 2 - VEICOLO DETTAGLI (dopo aver ricevuto i dati Step 1):
-- text_message di progresso
-- slider con id "vehicle_km", label "Km annui", min 0, max 80000, suffix " km"
-- choice_chips con id "vehicle_fuel", label "Alimentazione", options ["Benzina", "Diesel", "Ibrida", "Elettrica", "GPL"]
-- choice_chips con id "vehicle_usage", label "Utilizzo", options ["Uso Privato", "Uso Lavoro", "Uso Misto"]
-- number_input con id "vehicle_value", label "Valore veicolo (€)", min 1000, max 200000
-- submit_button con label "Continua"
-
-STEP 3 - CONDUCENTE (dopo aver ricevuto i dati Step 2):
-- text_message di progresso
-- text_input con id "driver_name", label "Nome e Cognome", hint "Es: Mario Rossi"
-- date_input con id "driver_birth_date", label "Data di nascita"
-- text_input con id "driver_city", label "Città di residenza", hint "Es: Milano, Roma"
-- date_input con id "driver_license_year", label "Data rilascio patente"
-- submit_button con label "Completa"
-
-STEP 4 - RIEPILOGO (dopo aver ricevuto i dati Step 3):
-- info_card type "success" con titolo "Preventivo Completato!" e riepilogo di TUTTI i dati raccolti
-- text_message con messaggio di conferma
-
-REGOLE FONDAMENTALI:
-- Usa Column per raggruppare widget verticalmente
-- Inizia SEMPRE ogni step con un text_message di contesto
-- OGNI step (1, 2, 3) DEVE terminare con un submit_button - l'utente preme il bottone per inviare i dati
-- NON generare mai solo testo - usa SEMPRE i widget tramite tool call
-- Quando ricevi "[DATI INSERITI DALL\'UTENTE]", procedi allo step successivo
-- NON ripetere campi già compilati
-- Alla fine (Step 4) mostra info_card type="success" con riepilogo completo
-
-Rispondi alla prima richiesta dell'utente con lo Step 1.
-''';
+    return false;
   }
 
   @override
   void dispose() {
-    _a2uiMessageProcessor.dispose();
-    _eventAggregator.dispose();
+    _genUiAdapter?.dispose();
     super.dispose();
   }
 }

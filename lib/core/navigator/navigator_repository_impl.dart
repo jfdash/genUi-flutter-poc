@@ -27,10 +27,7 @@ class NavigatorRepositoryImpl implements NavigatorRepository {
   @override
   Future<void> showLoader() async {
     await _pushLoader(
-      const CircularProgressIndicator(
-        color: AppTheme.primaryBlue,
-        backgroundColor: Colors.transparent,
-      ),
+      CircularProgressIndicator(color: AppTheme.action, backgroundColor: Colors.transparent),
     );
   }
 
