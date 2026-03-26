@@ -4,6 +4,7 @@ import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
 import 'package:gen_ui_poc/core/theme/app_theme.dart';
 import 'package:gen_ui_poc/features/home/cubit/home_cubit.dart';
 import 'package:gen_ui_poc/features/home/cubit/home_state.dart';
+import 'package:go_router/go_router.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -166,6 +167,11 @@ class _WorkspaceHeader extends StatelessWidget {
               color: AppTheme.textPrimary,
             ),
           ),
+        ),
+        IconButton(
+          onPressed: () => context.pushNamed('debug_logs'),
+          icon: const Icon(Icons.bug_report_outlined, size: 18),
+          tooltip: 'Debug logs',
         ),
         if (quotesCount > 0)
           Container(

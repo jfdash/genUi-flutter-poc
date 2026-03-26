@@ -17,6 +17,13 @@ class AutoQuoteModule implements QuoteProductModule {
   bool get isFlowSupportedInChat => true;
 
   @override
+  bool get supportsResumeInChat => true;
+
+  @override
+  String get unavailableInChatMessage =>
+      'I preventivi auto sono temporaneamente non disponibili in chat.';
+
+  @override
   List<String> get requiredFieldIds => const [
     'vehicle_brand',
     'vehicle_model',

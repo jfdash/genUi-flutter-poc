@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
 import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
 import 'package:gen_ui_poc/core/navigator/scaffold_with_nav_bar.dart';
+import 'package:gen_ui_poc/features/debug/debug_log_screen.dart';
 import 'package:gen_ui_poc/features/home/cubit/home_cubit.dart';
 import 'package:gen_ui_poc/features/home/home_screen.dart';
 import 'package:gen_ui_poc/features/quote/quote_chat_screen.dart';
@@ -49,9 +50,21 @@ final GoRouter appRouter = GoRouter(
       path: '/confirmation',
       name: 'confirmation',
       builder: (context, state) {
-        final quote = state.extra as CompletedQuote;
+        final extra = state.extra;
+        final quote = switch (extra) {
+          CompletedQuote quote => quote,
+          {'quote': final CompletedQuote quote} => quote,
+          _ => throw ArgumentError(
+            'QuoteConfirmationScreen requires a CompletedQuote',
+          ),
+        };
         return QuoteConfirmationScreen(quote: quote);
       },
+    ),
+    GoRoute(
+      path: '/debug/logs',
+      name: 'debug_logs',
+      builder: (context, state) => const DebugLogScreen(),
     ),
   ],
 );

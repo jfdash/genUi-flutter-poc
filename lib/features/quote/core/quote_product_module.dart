@@ -6,6 +6,8 @@ abstract class QuoteProductModule {
   QuoteProduct get product;
   String get displayName;
   bool get isFlowSupportedInChat;
+  bool get supportsResumeInChat;
+  String get unavailableInChatMessage;
   List<String> get requiredFieldIds;
   QuoteFlowDefinition get flowDefinition;
 

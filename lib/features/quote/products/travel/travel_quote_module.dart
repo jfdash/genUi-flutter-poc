@@ -17,6 +17,13 @@ class TravelQuoteModule implements QuoteProductModule {
   bool get isFlowSupportedInChat => true;
 
   @override
+  bool get supportsResumeInChat => true;
+
+  @override
+  String get unavailableInChatMessage =>
+      'I preventivi viaggio sono temporaneamente non disponibili in chat.';
+
+  @override
   List<String> get requiredFieldIds => const [
     'trip_destination',
     'departure_date',

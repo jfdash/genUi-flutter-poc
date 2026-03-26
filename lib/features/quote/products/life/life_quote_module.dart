@@ -14,6 +14,13 @@ class LifeQuoteModule implements QuoteProductModule {
   bool get isFlowSupportedInChat => false;
 
   @override
+  bool get supportsResumeInChat => false;
+
+  @override
+  String get unavailableInChatMessage =>
+      'I preventivi vita non sono ancora disponibili in chat.';
+
+  @override
   List<String> get requiredFieldIds => const [];
 
   @override

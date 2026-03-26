@@ -4,6 +4,7 @@ import 'package:gen_ui_poc/core/service/ai_service.dart';
 import 'package:gen_ui_poc/core/theme/app_theme.dart';
 import 'package:gen_ui_poc/features/quote/widgets/chat_quotes_widgets.dart';
 import 'package:genui/genui.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 class QuoteChatScreenEventDriven extends StatelessWidget {
@@ -11,10 +12,7 @@ class QuoteChatScreenEventDriven extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AIServiceEventDriven(),
-      child: const _QuoteChatView(),
-    );
+    return const _QuoteChatView();
   }
 }
 
@@ -217,6 +215,11 @@ class _ChatTopBar extends StatelessWidget {
                 style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
               ),
             ),
+          IconButton(
+            onPressed: () => context.pushNamed('debug_logs'),
+            icon: const Icon(Icons.bug_report_outlined, size: 18),
+            tooltip: 'Debug logs',
+          ),
           IconButton(
             onPressed: aiService.reset,
             icon: const Icon(Icons.notifications, size: 18),

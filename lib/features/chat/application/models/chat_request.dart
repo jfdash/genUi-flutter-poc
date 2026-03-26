@@ -6,6 +6,7 @@ class ChatRequest {
   final QuoteProduct? product;
   final String? focusCoverage;
   final String? quoteScope;
+  final String? targetQuoteReference;
   final double confidence;
   final String originalText;
 
@@ -15,6 +16,7 @@ class ChatRequest {
     this.product,
     this.focusCoverage,
     this.quoteScope,
+    this.targetQuoteReference,
     this.confidence = 1,
   });
 }

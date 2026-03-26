@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:gen_ui_poc/core/ai/genui/genui_chat_adapter.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
+import 'package:gen_ui_poc/core/logging/genui_logger.dart';
 import 'package:gen_ui_poc/core/model/completed_quote_model.dart';
 import 'package:gen_ui_poc/features/chat/application/chat_intent_detector.dart';
 import 'package:gen_ui_poc/features/chat/application/chat_orchestrator.dart';
@@ -41,6 +42,7 @@ class AIServiceEventDriven extends ChangeNotifier {
 
   bool _quoteCompleted = false;
   CompletedQuote? _lastCompletedQuote;
+  Map<String, Object?>? _lastSurfaceSnapshot;
   ChatMode _chatMode = ChatMode.general;
   final ChatIntentDetector _intentDetector = ChatIntentDetector();
   final ChatRequestNormalizer _requestNormalizer = ChatRequestNormalizer();
@@ -62,6 +64,7 @@ class AIServiceEventDriven extends ChangeNotifier {
   A2uiMessageProcessor? get messageProcessor => _genUiAdapter?.messageProcessor;
   bool get quoteCompleted => _quoteCompleted;
   CompletedQuote? get lastCompletedQuote => _lastCompletedQuote;
+  Map<String, Object?>? get lastSurfaceSnapshot => _lastSurfaceSnapshot;
   ChatMode get chatMode => _chatMode;
   int get activeFieldCount =>
       _chatMode == ChatMode.quoteFlow
@@ -79,6 +82,7 @@ class AIServiceEventDriven extends ChangeNotifier {
 
   void _initialize() {
     try {
+      GenUiLogger.lifecycle('Initializing AIServiceEventDriven');
       _quoteFlowOrchestrator = QuoteFlowOrchestrator(
         productRegistry: _productRegistry,
         quoteStorageRepository: quoteStorageRepository,
@@ -89,6 +93,7 @@ class AIServiceEventDriven extends ChangeNotifier {
       if (apiKey == null || apiKey.isEmpty) {
         _error = 'API Key non configurata';
         _isInitialized = false;
+        GenUiLogger.error('Initialization failed: missing GOOGLE_AI_API_KEY');
         notifyListeners();
         return;
       }
@@ -105,10 +110,24 @@ class AIServiceEventDriven extends ChangeNotifier {
 
       _isInitialized = true;
       _error = null;
+      GenUiLogger.success(
+        'AIServiceEventDriven initialized',
+        data: {
+          'chatMode': _chatMode,
+          'activeProduct': _activeQuoteConfig.product,
+        },
+      );
       notifyListeners();
     } catch (e, stack) {
       _error = 'Errore: $e';
       _isInitialized = false;
+      GenUiLogger.error(
+        'Initialization failed',
+        data: {
+          'error': e.toString(),
+          'stackTrace': stack.toString(),
+        },
+      );
       debugPrint('Init error: $e\n$stack');
       notifyListeners();
     }
@@ -126,6 +145,19 @@ class AIServiceEventDriven extends ChangeNotifier {
       'surfaceId': update.surfaceId,
       'timestamp': DateTime.now(),
     });
+    _lastSurfaceSnapshot = _buildSurfaceSnapshot(
+      surfaceId: update.surfaceId,
+      definition: update.definition,
+    );
+    GenUiLogger.surface(
+      'Surface added',
+      data: {
+        'surfaceId': update.surfaceId,
+        'rootComponentId': update.definition.rootComponentId,
+        'componentCount': update.definition.components.length,
+        'chatMode': _chatMode,
+      },
+    );
     _isLoading = false;
     notifyListeners();
   }
@@ -136,12 +168,26 @@ class AIServiceEventDriven extends ChangeNotifier {
     }
 
     _surfaceReceivedInPendingTurn = true;
+    _lastSurfaceSnapshot = _buildSurfaceSnapshot(
+      surfaceId: update.surfaceId,
+      definition: update.definition,
+    );
+    GenUiLogger.surface(
+      'Surface updated',
+      data: {
+        'surfaceId': update.surfaceId,
+        'rootComponentId': update.definition.rootComponentId,
+        'componentCount': update.definition.components.length,
+        'chatMode': _chatMode,
+      },
+    );
     _isLoading = false;
     notifyListeners();
   }
 
   void _handleTextResponse(String text) {
     if (text.trim().isEmpty) {
+      GenUiLogger.warning('Ignored empty text response');
       _pendingGenUiTurn = false;
       _isLoading = false;
       notifyListeners();
@@ -149,6 +195,10 @@ class AIServiceEventDriven extends ChangeNotifier {
     }
 
     if (_shouldSuppressInternalQuoteFlowText(text)) {
+      GenUiLogger.genui(
+        'Suppressed internal quote-flow text response',
+        data: {'preview': _truncate(text)},
+      );
       _pendingGenUiTurn = false;
       _surfaceReceivedInPendingTurn = false;
       _isLoading = false;
@@ -157,6 +207,10 @@ class AIServiceEventDriven extends ChangeNotifier {
     }
 
     if (_pendingGenUiTurn && _surfaceReceivedInPendingTurn) {
+      GenUiLogger.genui(
+        'Ignored text response because surface already rendered',
+        data: {'preview': _truncate(text)},
+      );
       _pendingGenUiTurn = false;
       _surfaceReceivedInPendingTurn = false;
       _isLoading = false;
@@ -169,6 +223,10 @@ class AIServiceEventDriven extends ChangeNotifier {
       'content': text,
       'timestamp': DateTime.now(),
     });
+    GenUiLogger.genui(
+      'Assistant text response accepted',
+      data: {'preview': _truncate(text)},
+    );
     _isLoading = false;
     _pendingGenUiTurn = false;
     _surfaceReceivedInPendingTurn = false;
@@ -177,6 +235,10 @@ class AIServiceEventDriven extends ChangeNotifier {
 
   void _handleGenUiError(ContentGeneratorError error) {
     _error = error.error.toString();
+    GenUiLogger.error(
+      'GenUI runtime error',
+      data: {'error': error.error.toString()},
+    );
     _isLoading = false;
     _pendingGenUiTurn = false;
     _surfaceReceivedInPendingTurn = false;
@@ -186,10 +248,22 @@ class AIServiceEventDriven extends ChangeNotifier {
   Future<void> _handleUserInteraction(UserUiInteractionMessage message) async {
     final payload = _parseUiInteraction(message.text);
     if (payload == null) {
+      GenUiLogger.warning(
+        'Discarded UI interaction with invalid payload',
+        data: {'raw': _truncate(message.text)},
+      );
       return;
     }
 
     final actionName = payload['name'] as String?;
+    GenUiLogger.event(
+      'Received UI interaction',
+      data: {
+        'actionName': actionName,
+        'surfaceId': payload['surfaceId'],
+        'chatMode': _chatMode,
+      },
+    );
     if (actionName != _quoteSubmitAction) {
       await _sendUiInteractionMessage(message);
       return;
@@ -205,6 +279,14 @@ class AIServiceEventDriven extends ChangeNotifier {
     }
 
     final collectedData = _extractCollectedDataFromSurface(surfaceId);
+    GenUiLogger.data(
+      'Collected draft data from surface',
+      data: {
+        'surfaceId': surfaceId,
+        'stepId': stepId,
+        'collectedData': collectedData,
+      },
+    );
     final flowState = _quoteFlowOrchestrator.createFlowState(
       config: _activeQuoteConfig,
       collectedData: collectedData,
@@ -238,6 +320,16 @@ class AIServiceEventDriven extends ChangeNotifier {
   Future<void> sendMessage(String text) async {
     if (_genUiAdapter == null) return;
 
+    GenUiLogger.input(
+      'User message received',
+      data: {
+        'text': text,
+        'chatMode': _chatMode,
+        'hasActiveFlow': _activeFlowState?.status == QuoteFlowStatus.active,
+        'hasPausedFlow': _activeFlowState?.isPaused ?? false,
+      },
+    );
+
     _messages.add({
       'role': 'user',
       'content': text,
@@ -246,23 +338,25 @@ class AIServiceEventDriven extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
-    final intent = _intentDetector.detect(
-      text,
-      isQuoteFlowActive: _chatMode == ChatMode.quoteFlow,
-      hasPausedQuoteFlow: _activeFlowState?.isPaused ?? false,
-    );
+    final intent = _intentDetector.detect(text);
     final request = _requestNormalizer.normalize(
       originalText: text,
       intent: intent,
     );
+    GenUiLogger.intent(
+      'Intent detected and request normalized',
+      data: {
+        'intent': intent,
+        'product': request.product,
+        'focusCoverage': request.focusCoverage,
+        'quoteScope': request.quoteScope,
+        'targetQuoteReference': request.targetQuoteReference,
+        'confidence': request.confidence,
+      },
+    );
 
-    final shouldResumePausedFlow =
-        _activeFlowState?.isPaused == true &&
-        _intentDetector.looksLikeContinuation(text);
-    if (shouldResumePausedFlow) {
-      await _resumePausedQuoteFlow();
-      return;
-    }
+    final requestedProduct = request.product ?? QuoteProduct.auto;
+    final requestedProductModule = _productRegistry.getModule(requestedProduct);
 
     final plan = _chatOrchestrator.buildPlan(
       request: request,
@@ -270,15 +364,38 @@ class AIServiceEventDriven extends ChangeNotifier {
       hasInProgressQuoteFlow:
           _activeFlowState != null &&
           _activeFlowState!.status == QuoteFlowStatus.active,
+      hasPausedQuoteFlow: _activeFlowState?.isPaused ?? false,
+      hasSavedQuotes: quoteStorageRepository.count > 0,
+      isRequestedProductSupported:
+          requestedProductModule?.isFlowSupportedInChat ?? false,
+    );
+    GenUiLogger.plan(
+      'Built response plan',
+      data: {
+        'plan': _describePlan(plan),
+        'renderer': plan.renderer,
+        'currentMode': _chatMode,
+        'hasInProgressQuoteFlow':
+            _activeFlowState != null &&
+            _activeFlowState!.status == QuoteFlowStatus.active,
+        'hasPausedQuoteFlow': _activeFlowState?.isPaused ?? false,
+      },
     );
 
     await _handleResponsePlan(plan);
   }
 
   Future<void> _handleResponsePlan(ChatResponsePlan plan) async {
+    GenUiLogger.plan(
+      'Handling response plan',
+      data: {
+        'plan': _describePlan(plan),
+        'renderer': plan.renderer,
+      },
+    );
     switch (plan) {
       case ShowQuotesListPlan():
-        if (plan.pauseInProgressQuoteFlow) {
+        if (plan.pauseActiveQuoteFlow) {
           _pauseActiveQuoteFlow();
           addMessage(
             'assistant',
@@ -288,8 +405,22 @@ class AIServiceEventDriven extends ChangeNotifier {
         _showSavedQuotes();
       case StartQuoteFlowPlan():
         await _startQuoteFlow(plan.config);
+      case ResumeQuotePlan():
+        if (plan.pauseActiveQuoteFlow) {
+          _pauseActiveQuoteFlow();
+        }
+        await _resumePausedQuoteFlow();
+      case ShowQuoteDetailsPlan():
+        if (plan.pauseActiveQuoteFlow) {
+          _pauseActiveQuoteFlow();
+          addMessage(
+            'assistant',
+            'Ho messo in pausa il flusso preventivo e apro il dettaglio del preventivo salvato.',
+          );
+        }
+        _showQuoteDetails(plan.targetQuoteReference);
       case AnswerWithModelPlan():
-        if (plan.pauseInProgressQuoteFlow) {
+        if (plan.pauseActiveQuoteFlow) {
           _pauseActiveQuoteFlow();
           addMessage(
             'assistant',
@@ -297,12 +428,28 @@ class AIServiceEventDriven extends ChangeNotifier {
           );
         }
         await _sendConversationMessage(plan.prompt);
+      case UnsupportedProductPlan():
+        _addFallbackMessage(plan.message);
+      case ClarifyIntentPlan():
+        _addFallbackMessage(plan.message);
+      case FallbackInfoPlan():
+        if (plan.pauseActiveQuoteFlow) {
+          _pauseActiveQuoteFlow();
+        }
+        _addFallbackMessage(plan.message);
     }
   }
 
   Future<void> _sendConversationMessage(String text) async {
     if (_genUiAdapter == null) return;
 
+    GenUiLogger.genui(
+      'Sending conversation message to GenUI runtime',
+      data: {
+        'chatMode': _chatMode,
+        'preview': _truncate(text),
+      },
+    );
     _isLoading = true;
     _error = null;
     _pendingGenUiTurn = true;
@@ -313,6 +460,10 @@ class AIServiceEventDriven extends ChangeNotifier {
       await _genUiAdapter!.sendText(text);
     } catch (e) {
       _error = e.toString();
+      GenUiLogger.error(
+        'Failed to send conversation message',
+        data: {'error': e.toString()},
+      );
       _isLoading = false;
       notifyListeners();
     }
@@ -321,6 +472,10 @@ class AIServiceEventDriven extends ChangeNotifier {
   Future<void> _sendUiInteractionMessage(UserUiInteractionMessage message) async {
     if (_genUiAdapter == null) return;
 
+    GenUiLogger.event(
+      'Forwarding UI interaction to GenUI runtime',
+      data: {'payload': _truncate(message.text)},
+    );
     _isLoading = true;
     _error = null;
     _pendingGenUiTurn = true;
@@ -331,6 +486,10 @@ class AIServiceEventDriven extends ChangeNotifier {
       await _genUiAdapter!.sendUiInteraction(message);
     } catch (e) {
       _error = e.toString();
+      GenUiLogger.error(
+        'Failed to send UI interaction',
+        data: {'error': e.toString()},
+      );
       _isLoading = false;
       notifyListeners();
     }
@@ -339,6 +498,10 @@ class AIServiceEventDriven extends ChangeNotifier {
   Future<void> _startQuoteFlow(QuoteFlowConfig config) async {
     final productModule = _productRegistry.getModule(config.product);
     if (productModule == null) {
+      GenUiLogger.warning(
+        'Requested quote flow for unknown product module',
+        data: {'product': config.product},
+      );
       addMessage(
         'assistant',
         'Questo prodotto non è ancora disponibile in chat. Per ora posso aiutarti con i preventivi auto.',
@@ -346,10 +509,13 @@ class AIServiceEventDriven extends ChangeNotifier {
       return;
     }
     if (!productModule.isFlowSupportedInChat) {
+      GenUiLogger.warning(
+        'Requested quote flow for unsupported chat product',
+        data: {'product': config.product},
+      );
       addMessage(
         'assistant',
-        'I preventivi ${productModule.displayName.toLowerCase()} non sono ancora disponibili in chat. '
-            'Per ora posso aiutarti con i preventivi auto.',
+        productModule.unavailableInChatMessage,
       );
       return;
     }
@@ -361,6 +527,14 @@ class AIServiceEventDriven extends ChangeNotifier {
 
     _restartConversation();
     _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    GenUiLogger.mode(
+      'Switched to quoteFlow mode',
+      data: {
+        'product': config.product,
+        'focusCoverage': config.focusCoverage,
+        'quoteScope': config.quoteScope,
+      },
+    );
     notifyListeners();
 
     final initialFlowState = _quoteFlowOrchestrator.createFlowState(
@@ -375,9 +549,14 @@ class AIServiceEventDriven extends ChangeNotifier {
   void _showSavedQuotes() {
     _chatMode = ChatMode.general;
     _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    _lastSurfaceSnapshot = null;
     _restartConversation();
 
     final quotes = quoteStorageRepository.getAllQuotes();
+    GenUiLogger.data(
+      'Loaded saved quotes',
+      data: {'count': quotes.length},
+    );
     if (quotes.isEmpty) {
       addStructuredMessage('assistant_quotes_empty', {});
       return;
@@ -386,8 +565,53 @@ class AIServiceEventDriven extends ChangeNotifier {
     addStructuredMessage('assistant_quotes_list', {'quotes': quotes});
   }
 
+  void _showQuoteDetails(String? targetQuoteReference) {
+    final quote = switch (targetQuoteReference) {
+      'latest' || null => quoteStorageRepository.getLatestQuote(),
+      _ => quoteStorageRepository.getLatestQuote(),
+    };
+
+    if (quote == null) {
+      _addFallbackMessage(
+        'Non ho trovato un preventivo da aprire. Posso mostrarti l’elenco dei preventivi salvati.',
+      );
+      return;
+    }
+
+    addMessage(
+      'assistant',
+      'Ti apro il dettaglio del preventivo ${quote.id.substring(0, 8).toUpperCase()}.',
+    );
+    navigatorRepository.pushToRoute<void>(
+      '/confirmation',
+      params: {'quote': quote},
+    );
+    GenUiLogger.success(
+      'Opened quote details',
+      data: {
+        'quoteId': quote.id,
+        'targetQuoteReference': targetQuoteReference ?? 'latest',
+      },
+    );
+  }
+
+  void _addFallbackMessage(String message) {
+    _chatMode = ChatMode.general;
+    _messages.removeWhere((entry) => entry['role'] == 'assistant_widget');
+    _lastSurfaceSnapshot = null;
+    addMessage('assistant', message);
+    GenUiLogger.warning(
+      'Fallback response delivered',
+      data: {
+        'message': message,
+        'chatMode': _chatMode,
+      },
+    );
+  }
+
   void _pauseActiveQuoteFlow() {
     if (_activeFlowState == null) {
+      GenUiLogger.warning('Pause requested without active flow state');
       return;
     }
 
@@ -396,39 +620,74 @@ class AIServiceEventDriven extends ChangeNotifier {
     );
     _chatMode = ChatMode.general;
     _messages.removeWhere((message) => message['role'] == 'assistant_widget');
+    _lastSurfaceSnapshot = null;
     _restartConversation();
+    GenUiLogger.mode(
+      'Paused active quote flow',
+      data: {
+        'product': _activeFlowState?.draft.config.product,
+        'completedStepIds': _activeFlowState?.completedStepIds,
+      },
+    );
   }
 
   Future<void> _resumePausedQuoteFlow() async {
     final pausedState = _activeFlowState;
     if (pausedState == null || !pausedState.isPaused) {
+      GenUiLogger.warning('Resume requested without paused flow');
       return;
     }
 
     _chatMode = ChatMode.quoteFlow;
     _activeQuoteConfig = pausedState.draft.config;
+    final module = _productRegistry.getModule(_activeQuoteConfig.product);
+    if (module != null && !module.supportsResumeInChat) {
+      _addFallbackMessage(
+        'Il prodotto ${module.displayName.toLowerCase()} non supporta ancora la ripresa del flusso in chat.',
+      );
+      return;
+    }
     _restartConversation();
     _activeFlowState = pausedState.copyWith(status: QuoteFlowStatus.active);
+    GenUiLogger.mode(
+      'Resumed quote flow',
+      data: {
+        'product': _activeQuoteConfig.product,
+        'currentStep': _activeFlowState?.currentStep?.id,
+      },
+    );
     await _requestQuoteStepFromGenUi(_activeFlowState!);
   }
 
   void _restartConversation() {
+    GenUiLogger.lifecycle(
+      'Restarting GenUI conversation runtime',
+      data: {
+        'chatMode': _chatMode,
+        'activeProduct': _activeQuoteConfig.product,
+      },
+    );
     _error = null;
     _isLoading = false;
     _pendingGenUiTurn = false;
     _surfaceReceivedInPendingTurn = false;
     _invalidQuoteSurfaceRetryCount = 0;
+    if (_chatMode != ChatMode.quoteFlow) {
+      _lastSurfaceSnapshot = null;
+    }
     _genUiAdapter?.restart(
       systemInstruction: _getEventDrivenSystemInstruction(),
     );
   }
 
   void reset() {
+    GenUiLogger.lifecycle('Resetting AI service state');
     _messages.clear();
     _chatMode = ChatMode.general;
     _activeFlowState = null;
     _quoteCompleted = false;
     _lastCompletedQuote = null;
+    _lastSurfaceSnapshot = null;
     _restartConversation();
     notifyListeners();
   }
@@ -437,12 +696,27 @@ class AIServiceEventDriven extends ChangeNotifier {
     if (_quoteCompleted) return;
 
     _quoteCompleted = true;
+    GenUiLogger.flow(
+      'Completing quote flow',
+      data: {
+        'product': flowState.draft.config.product,
+        'missingFieldIds': flowState.missingFieldIds,
+        'completedStepIds': flowState.completedStepIds,
+      },
+    );
     QuoteCompletionResult result = const QuoteCompletionResult.failure(
       'Completamento non riuscito',
     );
     try {
       result = await _quoteFlowOrchestrator.completeQuote(flowState: flowState);
     } catch (e, stack) {
+      GenUiLogger.error(
+        'Quote completion threw exception',
+        data: {
+          'error': e.toString(),
+          'stackTrace': stack.toString(),
+        },
+      );
       debugPrint('Quote completion error: $e\n$stack');
     }
 
@@ -450,17 +724,43 @@ class AIServiceEventDriven extends ChangeNotifier {
       _activeFlowState = flowState.copyWith(status: QuoteFlowStatus.completed);
       _lastCompletedQuote = result.quote;
       _chatMode = ChatMode.general;
+      GenUiLogger.success(
+        'Quote completed successfully',
+        data: {
+          'quoteId': result.quote!.id,
+          'totalPrice': result.quote!.totalPrice,
+          'essentialPrice': result.quote!.essentialPrice,
+          'product': flowState.draft.config.product,
+        },
+      );
       notifyListeners();
       await _requestQuoteSummaryFromGenUi(result.quote!);
       onQuoteCompleted?.call(result.quote!);
     } else {
       _quoteCompleted = false;
       _error = result.error;
+      GenUiLogger.error(
+        'Quote completion failed',
+        data: {'error': result.error},
+      );
       notifyListeners();
     }
   }
 
   String _getEventDrivenSystemInstruction() {
+    if (_chatMode != ChatMode.quoteFlow) {
+      return '''
+Sei un assistente assicurativo AI. Rispondi SEMPRE in italiano.
+
+Modalita corrente: chat generale.
+- rispondi in testo semplice
+- non avviare wizard o flow preventivo se non ricevi una istruzione interna esplicita
+- non creare surface GenUI per richieste informative o FAQ
+- se l'utente chiede spiegazioni su coperture, rispondi in modo chiaro e sintetico
+- non mostrare istruzioni interne
+''';
+    }
+
     final module = _productRegistry.getModule(_activeQuoteConfig.product);
     final flowPrompt =
         module?.buildFlowPromptDescription(_activeQuoteConfig) ??
@@ -501,6 +801,16 @@ $flowPrompt
   }) async {
     _activeFlowState = flowState;
     _invalidQuoteSurfaceRetryCount = 0;
+    GenUiLogger.flow(
+      'Requesting quote step render',
+      data: {
+        'product': flowState.draft.config.product,
+        'stepId': flowState.currentStep?.id,
+        'stepTitle': flowState.currentStep?.title,
+        'isInitialRender': isInitialRender,
+        'missingFieldIds': flowState.missingFieldIds,
+      },
+    );
     await _sendConversationMessage(
       _buildQuoteStepInstruction(flowState, isInitialRender: isInitialRender),
     );
@@ -579,9 +889,24 @@ Non ci sono altri step da mostrare.
     );
     if (validationError == null) {
       _invalidQuoteSurfaceRetryCount = 0;
+      GenUiLogger.surface(
+        'Validated quote-flow surface',
+        data: {
+          'stepId': flowState!.currentStep?.id,
+          'componentCount': definition.components.length,
+        },
+      );
       return true;
     }
 
+    GenUiLogger.warning(
+      'Invalid quote-flow surface detected',
+      data: {
+        'stepId': flowState.currentStep?.id,
+        'validationError': validationError,
+        'retryCount': _invalidQuoteSurfaceRetryCount,
+      },
+    );
     if (_invalidQuoteSurfaceRetryCount < 1) {
       _invalidQuoteSurfaceRetryCount++;
       unawaited(_requestQuoteStepCorrection(flowState!, validationError));
@@ -589,6 +914,13 @@ Non ci sono altri step da mostrare.
     }
 
     _error = 'Surface genUi non valida per lo step corrente: $validationError';
+    GenUiLogger.error(
+      'Surface rejected after retry',
+      data: {
+        'stepId': flowState.currentStep?.id,
+        'validationError': validationError,
+      },
+    );
     _isLoading = false;
     _pendingGenUiTurn = false;
     _surfaceReceivedInPendingTurn = false;
@@ -600,6 +932,13 @@ Non ci sono altri step da mostrare.
     QuoteFlowState flowState,
     String validationError,
   ) async {
+    GenUiLogger.warning(
+      'Requesting quote step correction from GenUI',
+      data: {
+        'stepId': flowState.currentStep?.id,
+        'validationError': validationError,
+      },
+    );
     _messages.removeWhere((message) => message['role'] == 'assistant_widget');
     _isLoading = true;
     _error = null;
@@ -738,6 +1077,13 @@ Non ci sono altri step da mostrare.
   }
 
   Future<void> _requestQuoteSummaryFromGenUi(CompletedQuote quote) async {
+    GenUiLogger.flow(
+      'Requesting final quote summary render',
+      data: {
+        'quoteId': quote.id,
+        'coverages': quote.coverages.length,
+      },
+    );
     await _sendConversationMessage(_buildQuoteSummaryInstruction(quote));
   }
 
@@ -759,6 +1105,25 @@ Valori da usare:
 
 Non aggiungere testo puro o altri widget.
 ''';
+  }
+
+  Map<String, Object?> _buildSurfaceSnapshot({
+    required String surfaceId,
+    required UiDefinition definition,
+  }) {
+    final componentTypes = definition.components.entries
+        .map((entry) => '${entry.key}:${entry.value.type}')
+        .toList(growable: false);
+    return {
+      'surfaceId': surfaceId,
+      'rootComponentId': definition.rootComponentId,
+      'componentCount': definition.components.length,
+      'componentTypes': componentTypes,
+      'chatMode': _chatMode.name,
+      'product':
+          _activeFlowState?.draft.config.product.name ??
+          _activeQuoteConfig.product.name,
+    };
   }
 
   Map<String, dynamic> _extractCollectedDataFromSurface(String surfaceId) {
@@ -817,6 +1182,28 @@ Non aggiungere testo puro o altri widget.
     }
 
     return false;
+  }
+
+  String _describePlan(ChatResponsePlan plan) {
+    return switch (plan) {
+      ShowQuotesListPlan() => 'ShowQuotesListPlan',
+      StartQuoteFlowPlan(config: final config) =>
+        'StartQuoteFlowPlan(${config.product.name})',
+      ResumeQuotePlan() => 'ResumeQuotePlan',
+      ShowQuoteDetailsPlan() => 'ShowQuoteDetailsPlan',
+      AnswerWithModelPlan() => 'AnswerWithModelPlan',
+      UnsupportedProductPlan() => 'UnsupportedProductPlan',
+      ClarifyIntentPlan() => 'ClarifyIntentPlan',
+      FallbackInfoPlan() => 'FallbackInfoPlan',
+    };
+  }
+
+  String _truncate(String value, {int maxLength = 240}) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return '${normalized.substring(0, maxLength)}...';
   }
 
   @override

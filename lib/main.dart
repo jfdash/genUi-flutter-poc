@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gen_ui_poc/core/di/di.dart';
+import 'package:gen_ui_poc/core/logging/genui_log_store.dart';
+import 'package:gen_ui_poc/core/logging/genui_logger.dart';
 import 'package:gen_ui_poc/core/router/app_router.dart';
 import 'package:gen_ui_poc/core/service/quote_storage_repository.dart';
 import 'package:gen_ui_poc/core/theme/app_theme.dart';
@@ -20,7 +22,12 @@ Future<void> main() async {
 
   // Configura il listener per i log di genui
   _genUiLogger.onRecord.listen((record) {
-    debugPrint('🔍 [${record.loggerName}] ${record.message}');
+    GenUiLogStore.instance.add(
+      GenUiLogScope.genui,
+      'Runtime ${record.loggerName}',
+      data: {'message': record.message},
+    );
+    debugPrint('[${record.loggerName}] ${record.message}');
   });
 
   await registerDependencies();
@@ -66,6 +73,7 @@ class _InsuranceAppState extends State<InsuranceApp> {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: _aiService),
+        ChangeNotifierProvider.value(value: GenUiLogStore.instance),
         RepositoryProvider(create: (_) => CoverageCalculator()),
       ],
       child: MaterialApp.router(

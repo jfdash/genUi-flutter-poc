@@ -59,6 +59,14 @@ class QuoteStorageRepository {
     }
   }
 
+  CompletedQuote? getLatestQuote() {
+    final quotes = getAllQuotes();
+    if (quotes.isEmpty) {
+      return null;
+    }
+    return quotes.first;
+  }
+
   /// Elimina un preventivo
   Future<void> deleteQuote(String id) async {
     await _safeBox.delete(id);

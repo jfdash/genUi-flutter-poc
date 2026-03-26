@@ -1,20 +1,22 @@
 import 'package:gen_ui_poc/features/chat/application/models/chat_intent.dart';
 
 class ChatIntentDetector {
-  ChatIntent detect(
-    String input, {
-    required bool isQuoteFlowActive,
-    bool hasPausedQuoteFlow = false,
-  }) {
+  ChatIntent detect(String input) {
     final normalized = _normalize(input);
 
     if (_isListQuotesRequest(normalized)) {
       return ChatIntent.listQuotes;
     }
 
-    if (_isStartQuoteRequest(normalized) ||
-        ((isQuoteFlowActive || hasPausedQuoteFlow) &&
-            _looksLikeQuoteContinuation(normalized))) {
+    if (_isQuoteDetailsRequest(normalized)) {
+      return ChatIntent.quoteDetails;
+    }
+
+    if (_isResumeQuoteRequest(normalized)) {
+      return ChatIntent.resumeQuote;
+    }
+
+    if (_isStartQuoteRequest(normalized)) {
       return ChatIntent.startQuote;
     }
 
@@ -84,6 +86,39 @@ class ChatIntentDetector {
       'inizia',
       'partiamo',
       'preventivo',
+    ];
+
+    return patterns.any(normalized.contains);
+  }
+
+  bool _isResumeQuoteRequest(String normalized) {
+    const patterns = [
+      'continua',
+      'prosegui',
+      'riprendi',
+      'torna al preventivo',
+      'completa il preventivo',
+      'riprendi il preventivo',
+      'continua il preventivo',
+      'vai avanti',
+    ];
+
+    return patterns.any(normalized.contains);
+  }
+
+  bool _isQuoteDetailsRequest(String normalized) {
+    const patterns = [
+      'mostrami l ultimo preventivo',
+      'fammi vedere l ultimo preventivo',
+      'apri l ultimo preventivo',
+      'dettaglio preventivo',
+      'dettagli preventivo',
+      'vedi preventivo',
+      'apri preventivo',
+      'mostra il preventivo',
+      'mostrami il preventivo',
+      'ultimo preventivo',
+      'preventivo piu recente',
     ];
 
     return patterns.any(normalized.contains);

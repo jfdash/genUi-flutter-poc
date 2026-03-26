@@ -1,1 +1,1 @@
-enum ChatIntent { listQuotes, startQuote, insuranceFaq }
+enum ChatIntent { listQuotes, startQuote, resumeQuote, quoteDetails, insuranceFaq }

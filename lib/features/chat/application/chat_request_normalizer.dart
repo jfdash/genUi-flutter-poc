@@ -15,6 +15,7 @@ class ChatRequestNormalizer {
       product: _extractProduct(normalized, intent),
       focusCoverage: _extractFocusCoverage(normalized),
       quoteScope: _extractQuoteScope(normalized),
+      targetQuoteReference: _extractTargetQuoteReference(normalized, intent),
       confidence: 1,
     );
   }
@@ -65,5 +66,20 @@ class ChatRequestNormalizer {
       return 'comparison';
     }
     return 'package';
+  }
+
+  String? _extractTargetQuoteReference(String normalized, ChatIntent intent) {
+    if (intent != ChatIntent.quoteDetails) {
+      return null;
+    }
+
+    if (normalized.contains('ultimo') ||
+        normalized.contains('ultima') ||
+        normalized.contains('recente') ||
+        normalized.contains('piu recente')) {
+      return 'latest';
+    }
+
+    return 'latest';
   }
 }
